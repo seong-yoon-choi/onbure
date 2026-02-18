@@ -1,6 +1,6 @@
 "use client";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { AlertModal } from "@/components/ui/modal";
@@ -15,7 +15,7 @@ interface ContextMenuState {
     id: string;
 }
 
-export default function DiscoveryPage() {
+function DiscoveryPageContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const [activeTab, setActiveTab] = useState<"teams" | "people">("teams");
@@ -810,5 +810,13 @@ export default function DiscoveryPage() {
             }}
         />
         </>
+    );
+}
+
+export default function DiscoveryPage() {
+    return (
+        <Suspense fallback={<div className="text-[var(--muted)]">Loading...</div>}>
+            <DiscoveryPageContent />
+        </Suspense>
     );
 }
