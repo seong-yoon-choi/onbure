@@ -4707,32 +4707,66 @@ export default function WorkspacePage() {
 
     const handleDeleteFileFromMenu = async () => {
         if (!teamId || !fileItemMenu) return;
-        const targetFileId = fileItemMenu.fileId;
+        const targetFileId = String(fileItemMenu.fileId || "").trim();
+        const selectedFileIds = Array.from(
+            new Set(
+                selectedSidebarFileIds
+                    .map((fileId) => String(fileId || "").trim())
+                    .filter(Boolean)
+            )
+        );
+        const targetFileIds =
+            selectedFileIds.length > 1 && selectedFileIds.includes(targetFileId)
+                ? selectedFileIds
+                : [targetFileId];
         setFileItemMenu(null);
 
-        try {
-            const res = await fetch(`/api/workspace/${teamId}`, {
-                method: "DELETE",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: "FILE", id: targetFileId, scope: sidebarFileScope }),
-            });
+        let successCount = 0;
+        let failedCount = 0;
 
-            if (!res.ok) {
-                setNotice({
-                    open: true,
-                    title: "Delete failed",
-                    message: "Unable to delete this item.",
+        for (const fileId of targetFileIds) {
+            try {
+                const res = await fetch(`/api/workspace/${teamId}`, {
+                    method: "DELETE",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ type: "FILE", id: fileId, scope: sidebarFileScope }),
                 });
-                return;
-            }
 
-            handleRemovePlacedFile(targetFileId);
+                if (!res.ok) {
+                    failedCount += 1;
+                    continue;
+                }
+
+                handleRemovePlacedFile(fileId);
+                successCount += 1;
+            } catch {
+                failedCount += 1;
+            }
+        }
+
+        if (successCount > 0) {
+            const deletedSet = new Set(targetFileIds);
+            setSelectedSidebarFileIds((prev) => prev.filter((fileId) => !deletedSet.has(fileId)));
             void fetchData({ silent: true });
-        } catch {
+        }
+
+        if (failedCount > 0) {
             setNotice({
                 open: true,
                 title: "Delete failed",
-                message: "Unable to delete this item.",
+                message:
+                    successCount > 0
+                        ? `${successCount}개 지웠고, ${failedCount}개는 지우지 못했습니다.`
+                        : "Unable to delete this item.",
+            });
+            return;
+        }
+
+        if (targetFileIds.length > 1) {
+            setNotice({
+                open: true,
+                title: "삭제 완료",
+                message: `${successCount}개 파일을 모두 지웠습니다.`,
             });
         }
     };
