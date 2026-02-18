@@ -1,8 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { createMessageForThread, listMessagesForThread } from "@/lib/db/chat-widget";
-import { appendAuditLog } from "@/lib/db/audit";
+
+type ChatWidgetDbModule = typeof import("@/lib/db/chat-widget");
+type AuditDbModule = typeof import("@/lib/db/audit");
+
+let chatWidgetDbPromise: Promise<ChatWidgetDbModule> | null = null;
+let auditDbPromise: Promise<AuditDbModule> | null = null;
+
+function loadChatWidgetDb() {
+    if (!chatWidgetDbPromise) {
+        chatWidgetDbPromise = import("@/lib/db/chat-widget");
+    }
+    return chatWidgetDbPromise;
+}
+
+function loadAuditDb() {
+    if (!auditDbPromise) {
+        auditDbPromise = import("@/lib/db/audit");
+    }
+    return auditDbPromise;
+}
+
+async function resolveAuthenticatedUserId() {
+    try {
+        const session = await getServerSession(authOptions);
+        const userId = String((session?.user as { id?: string } | undefined)?.id || "").trim();
+        if (!session || !userId) return null;
+        return userId;
+    } catch (error) {
+        console.error("Failed to resolve session in /api/chat/messages", error);
+        return null;
+    }
+}
 
 function parseDmParticipants(threadId: string) {
     const normalized = String(threadId || "").trim();
@@ -35,22 +65,19 @@ function invalidateChatAlertsCache(userIds: Array<string | undefined | null>) {
 }
 
 export async function GET(req: NextRequest) {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const currentUserId = await resolveAuthenticatedUserId();
+    if (!currentUserId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     try {
+        const chatWidgetDb = await loadChatWidgetDb();
         const threadId = req.nextUrl.searchParams.get("threadId");
         if (!threadId) {
             return NextResponse.json({ error: "threadId is required." }, { status: 400 });
         }
 
-        const currentUserId = String((session.user as { id?: string } | undefined)?.id || "").trim();
-        if (!currentUserId) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-        const messages = await listMessagesForThread(threadId, currentUserId);
+        const messages = await chatWidgetDb.listMessagesForThread(threadId, currentUserId);
         invalidateChatAlertsCache([currentUserId]);
         return NextResponse.json(messages);
     } catch (error: any) {
@@ -66,12 +93,14 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-    const session = await getServerSession(authOptions);
-    if (!session) {
+    const senderUserId = await resolveAuthenticatedUserId();
+    if (!senderUserId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     try {
+        const chatWidgetDb = await loadChatWidgetDb();
+        const auditDb = await loadAuditDb();
         const body = await req.json().catch(() => null);
         if (!body || typeof body !== "object") {
             return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
@@ -85,17 +114,13 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "body_original is required." }, { status: 400 });
         }
 
-        const senderUserId = String((session.user as { id?: string } | undefined)?.id || "").trim();
-        if (!senderUserId) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
-        const message = await createMessageForThread(threadId, senderUserId, body_original);
+        const message = await chatWidgetDb.createMessageForThread(threadId, senderUserId, body_original);
         const teamId = parseTeamId(threadId);
         const dmParticipants = parseDmParticipants(threadId);
         const dmTargets = dmParticipants.filter((userId) => userId !== senderUserId);
 
         if (teamId) {
-            await appendAuditLog({
+            await auditDb.appendAuditLog({
                 category: "chat",
                 event: "message_created",
                 actorUserId: senderUserId,
@@ -106,7 +131,7 @@ export async function POST(req: NextRequest) {
         } else if (dmTargets.length) {
             await Promise.all(
                 dmTargets.map((targetUserId) =>
-                    appendAuditLog({
+                    auditDb.appendAuditLog({
                         category: "chat",
                         event: "message_created",
                         actorUserId: senderUserId,
@@ -118,7 +143,7 @@ export async function POST(req: NextRequest) {
             );
             invalidateChatAlertsCache([senderUserId, ...dmTargets]);
         } else {
-            await appendAuditLog({
+            await auditDb.appendAuditLog({
                 category: "chat",
                 event: "message_created",
                 actorUserId: senderUserId,
