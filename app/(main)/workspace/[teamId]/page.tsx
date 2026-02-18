@@ -3607,7 +3607,7 @@ export default function WorkspacePage() {
         const canRemoveFromWorkspace = selectedCanvasItemKeys.length > 0;
         if (!canCreateGroup && !canCreateAnnotation && !canRemoveFromWorkspace) return;
 
-        const menuWidth = 184;
+        const menuWidth = 164;
         const menuHeight =
             (canCreateGroup ? 44 : 0) +
             (canCreateAnnotation ? 44 : 0) +
@@ -6584,7 +6584,7 @@ export default function WorkspacePage() {
             {workspaceCanvasMenu && (
                 <div
                     data-workspace-canvas-context-menu="true"
-                    className="fixed z-[73] min-w-[172px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
+                    className="fixed z-[73] min-w-[154px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
                     style={{ left: `${workspaceCanvasMenu.x}px`, top: `${workspaceCanvasMenu.y}px` }}
                     onMouseDown={(event) => event.stopPropagation()}
                 >
@@ -6594,7 +6594,7 @@ export default function WorkspacePage() {
                             className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                             onClick={createWorkspaceGroupFromSelection}
                         >
-                            그룹 만들기 ({selectedCanvasItemKeys.length})
+                            그룹 만들기
                         </button>
                     )}
                     {selectedCanvasItemKeys.length > 0 && (
@@ -6603,7 +6603,7 @@ export default function WorkspacePage() {
                             className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                             onClick={removeSelectedCanvasItemsFromWorkspace}
                         >
-                            워크스페이스에서 지우기 ({selectedCanvasItemKeys.length})
+                            워크스페이스에서 지우기
                         </button>
                     )}
                     {workspaceCanvasMenu.mode !== "groupOnly" && (
