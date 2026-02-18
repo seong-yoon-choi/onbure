@@ -54,7 +54,20 @@ function parseDmParticipants(threadId: string) {
     );
 }
 
+function hasSessionCookie(req: Request): boolean {
+    const cookieHeader = String(req.headers.get("cookie") || "");
+    if (!cookieHeader) return false;
+
+    return (
+        cookieHeader.includes("next-auth.session-token=") ||
+        cookieHeader.includes("__Secure-next-auth.session-token=") ||
+        cookieHeader.includes("authjs.session-token=") ||
+        cookieHeader.includes("__Secure-authjs.session-token=")
+    );
+}
+
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+    if (!hasSessionCookie(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const currentUserId = await resolveAuthenticatedUserId();
     if (!currentUserId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const { id } = await params;
@@ -76,6 +89,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+    if (!hasSessionCookie(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const senderId = await resolveAuthenticatedUserId();
     if (!senderId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

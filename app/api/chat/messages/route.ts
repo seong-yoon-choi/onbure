@@ -64,7 +64,22 @@ function invalidateChatAlertsCache(userIds: Array<string | undefined | null>) {
     }
 }
 
+function hasSessionCookie(req: NextRequest): boolean {
+    const cookieHeader = String(req.headers.get("cookie") || "");
+    if (!cookieHeader) return false;
+
+    return (
+        cookieHeader.includes("next-auth.session-token=") ||
+        cookieHeader.includes("__Secure-next-auth.session-token=") ||
+        cookieHeader.includes("authjs.session-token=") ||
+        cookieHeader.includes("__Secure-authjs.session-token=")
+    );
+}
+
 export async function GET(req: NextRequest) {
+    if (!hasSessionCookie(req)) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const currentUserId = await resolveAuthenticatedUserId();
     if (!currentUserId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -93,6 +108,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+    if (!hasSessionCookie(req)) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const senderUserId = await resolveAuthenticatedUserId();
     if (!senderUserId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
