@@ -1,22 +1,7 @@
 import { NextResponse } from "next/server";
-import {
-    createChatRequest,
-    getChatRequestsForUserByStatuses,
-    createTeamInvite,
-    getTeamInvitesForUserByStatuses,
-    createJoinRequest,
-    getJoinApplicationsForManagerByStatuses,
-    createFileShareRequest,
-    getFileShareRequestsForUserByStatuses,
-    updateRequestStatus,
-    RequestConflictError,
-    type RequestStatus,
-    type RequestItem,
-} from "@/lib/db/requests";
-import { getTeamById } from "@/lib/db/teams";
+import type { RequestItem, RequestStatus } from "@/lib/db/requests";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { appendAuditLog } from "@/lib/db/audit";
 
 interface RequestsPayload {
     requests: unknown[];
@@ -37,6 +22,35 @@ declare global {
 const requestsCache =
     globalThis.__onbureRequestsCache ||
     (globalThis.__onbureRequestsCache = new Map<string, RequestsCacheEntry>());
+
+type RequestsDbModule = typeof import("@/lib/db/requests");
+type TeamsDbModule = typeof import("@/lib/db/teams");
+type AuditDbModule = typeof import("@/lib/db/audit");
+
+let requestsDbModulePromise: Promise<RequestsDbModule> | null = null;
+let teamsDbModulePromise: Promise<TeamsDbModule> | null = null;
+let auditDbModulePromise: Promise<AuditDbModule> | null = null;
+
+function loadRequestsDb() {
+    if (!requestsDbModulePromise) {
+        requestsDbModulePromise = import("@/lib/db/requests");
+    }
+    return requestsDbModulePromise;
+}
+
+function loadTeamsDb() {
+    if (!teamsDbModulePromise) {
+        teamsDbModulePromise = import("@/lib/db/teams");
+    }
+    return teamsDbModulePromise;
+}
+
+function loadAuditDb() {
+    if (!auditDbModulePromise) {
+        auditDbModulePromise = import("@/lib/db/audit");
+    }
+    return auditDbModulePromise;
+}
 
 function unauthorizedResponse() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -95,25 +109,45 @@ function matchesRequest(item: RequestItem, requestId: string) {
     return item.id === requestId || item.requestId === requestId;
 }
 
+function parseRequestConflictError(error: unknown): { requestType: "CHAT" | "INVITE" | "JOIN" | "FILE"; message: string } | null {
+    if (!error || typeof error !== "object") return null;
+
+    const candidate = error as {
+        name?: string;
+        requestType?: unknown;
+        message?: unknown;
+    };
+    if (candidate.name !== "RequestConflictError") return null;
+
+    const requestType = String(candidate.requestType || "").toUpperCase();
+    if (!["CHAT", "INVITE", "JOIN", "FILE"].includes(requestType)) return null;
+
+    return {
+        requestType: requestType as "CHAT" | "INVITE" | "JOIN" | "FILE",
+        message: typeof candidate.message === "string" ? candidate.message : "",
+    };
+}
+
 async function findAuthorizedRequestForUpdate(
+    requestsDb: RequestsDbModule,
     type: "CHAT" | "INVITE" | "JOIN" | "FILE",
     currentUserId: string,
     requestId: string
 ) {
     const allStatuses: RequestStatus[] = ["PENDING", "ACCEPTED", "DECLINED"];
     if (type === "CHAT") {
-        const requests = await getChatRequestsForUserByStatuses(currentUserId, allStatuses);
+        const requests = await requestsDb.getChatRequestsForUserByStatuses(currentUserId, allStatuses);
         return requests.find((item) => matchesRequest(item, requestId)) || null;
     }
     if (type === "INVITE") {
-        const requests = await getTeamInvitesForUserByStatuses(currentUserId, allStatuses);
+        const requests = await requestsDb.getTeamInvitesForUserByStatuses(currentUserId, allStatuses);
         return requests.find((item) => matchesRequest(item, requestId)) || null;
     }
     if (type === "FILE") {
-        const requests = await getFileShareRequestsForUserByStatuses(currentUserId, allStatuses);
+        const requests = await requestsDb.getFileShareRequestsForUserByStatuses(currentUserId, allStatuses);
         return requests.find((item) => matchesRequest(item, requestId)) || null;
     }
-    const requests = await getJoinApplicationsForManagerByStatuses(currentUserId, allStatuses);
+    const requests = await requestsDb.getJoinApplicationsForManagerByStatuses(currentUserId, allStatuses);
     return requests.find((item) => matchesRequest(item, requestId)) || null;
 }
 
@@ -128,12 +162,13 @@ export async function GET() {
     }
 
     try {
+        const requestsDb = await loadRequestsDb();
         const allStatuses: RequestStatus[] = ["PENDING", "ACCEPTED", "DECLINED"];
         const [chatAll, invitesAll, applicationsAll, fileAll] = await Promise.all([
-            getChatRequestsForUserByStatuses(userId, allStatuses),
-            getTeamInvitesForUserByStatuses(userId, allStatuses),
-            getJoinApplicationsForManagerByStatuses(userId, allStatuses),
-            getFileShareRequestsForUserByStatuses(userId, allStatuses),
+            requestsDb.getChatRequestsForUserByStatuses(userId, allStatuses),
+            requestsDb.getTeamInvitesForUserByStatuses(userId, allStatuses),
+            requestsDb.getJoinApplicationsForManagerByStatuses(userId, allStatuses),
+            requestsDb.getFileShareRequestsForUserByStatuses(userId, allStatuses),
         ]);
 
         const pendingChat = chatAll.filter((item) => item.status === "PENDING");
@@ -200,6 +235,8 @@ export async function POST(req: Request) {
     if (!userId) return unauthorizedResponse();
 
     try {
+        const requestsDb = await loadRequestsDb();
+        const auditDb = await loadAuditDb();
         const body = await req.json().catch(() => null);
         if (!body || typeof body !== "object") {
             return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
@@ -216,14 +253,14 @@ export async function POST(req: Request) {
             if (typeof toId !== "string" || !toId.trim()) {
                 return NextResponse.json({ error: "toId is required for chat request." }, { status: 400 });
             }
-            await createChatRequest(userId, toId, normalizedMessage || "Let's chat!");
+            await requestsDb.createChatRequest(userId, toId, normalizedMessage || "Let's chat!");
             targetUserId = toId;
         } else if (type === "INVITE") {
             if (!body.teamId) throw new Error("Team ID required for invite");
             if (typeof toId !== "string" || !toId.trim()) {
                 return NextResponse.json({ error: "toId is required for team invite." }, { status: 400 });
             }
-            await createTeamInvite(
+            await requestsDb.createTeamInvite(
                 body.teamId,
                 userId,
                 toId,
@@ -240,7 +277,8 @@ export async function POST(req: Request) {
             if (!teamId) {
                 return NextResponse.json({ error: "teamId is required for join request." }, { status: 400 });
             }
-            const team = await getTeamById(teamId);
+            const teamsDb = await loadTeamsDb();
+            const team = await teamsDb.getTeamById(teamId);
             if (!team) {
                 return NextResponse.json({ error: "Team not found." }, { status: 404 });
             }
@@ -250,7 +288,7 @@ export async function POST(req: Request) {
                     ? answers.a1.trim().replace(/\s+/g, " ").slice(0, 160)
                     : "";
             const joinMessage = normalizedMessage || answerMessage || "I'd like to join your team.";
-            await createJoinRequest(teamId, userId, joinMessage, "");
+            await requestsDb.createJoinRequest(teamId, userId, joinMessage, "");
         } else if (type === "FILE") {
             const teamId =
                 typeof body.teamId === "string" && body.teamId.trim().length > 0 ? body.teamId.trim() : "";
@@ -268,7 +306,7 @@ export async function POST(req: Request) {
             if (typeof toId !== "string" || !toId.trim()) {
                 return NextResponse.json({ error: "toId is required for file share request." }, { status: 400 });
             }
-            await createFileShareRequest(
+            await requestsDb.createFileShareRequest(
                 teamId,
                 userId,
                 toId.trim(),
@@ -289,7 +327,7 @@ export async function POST(req: Request) {
             normalizedType === "JOIN"
                 ? joinOwnerUserId
                 : String(targetUserId || (typeof toId === "string" ? toId : "")).trim();
-        await appendAuditLog({
+        await auditDb.appendAuditLog({
             category: "request",
             event: "request_created",
             actorUserId: userId,
@@ -305,7 +343,7 @@ export async function POST(req: Request) {
         });
 
         if (normalizedType === "CHAT") {
-            await appendAuditLog({
+            await auditDb.appendAuditLog({
                 category: "chat",
                 event: "connection_requested",
                 actorUserId: userId,
@@ -318,22 +356,23 @@ export async function POST(req: Request) {
 
         return NextResponse.json({ success: true });
     } catch (error) {
-        if (error instanceof RequestConflictError) {
+        const conflict = parseRequestConflictError(error);
+        if (conflict) {
             const isFileDuplicate =
-                error.requestType === "FILE" &&
-                error.message === "An active file request already exists for this file and user.";
+                conflict.requestType === "FILE" &&
+                conflict.message === "An active file request already exists for this file and user.";
             if (isFileDuplicate) {
                 return NextResponse.json(
                     {
-                        error: "한번 보낸 파일입니다. 또 보내시겠습니까?",
-                        type: error.requestType,
+                        error: "This file was already sent. Send again?",
+                        type: conflict.requestType,
                         code: "FILE_ALREADY_SENT",
                     },
                     { status: 409 }
                 );
             }
             return NextResponse.json(
-                { error: error.message, type: error.requestType, code: "REQUEST_ALREADY_EXISTS" },
+                { error: conflict.message, type: conflict.requestType, code: "REQUEST_ALREADY_EXISTS" },
                 { status: 409 }
             );
         }
@@ -350,6 +389,8 @@ export async function PUT(req: Request) {
     if (!currentUserId) return unauthorizedResponse();
 
     try {
+        const requestsDb = await loadRequestsDb();
+        const auditDb = await loadAuditDb();
         const body = await req.json().catch(() => null);
         if (!body || typeof body !== "object") {
             return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
@@ -370,13 +411,13 @@ export async function PUT(req: Request) {
             return NextResponse.json({ error: "Invalid request status." }, { status: 400 });
         }
 
-        const authorizedRequest = await findAuthorizedRequestForUpdate(type, currentUserId, id);
+        const authorizedRequest = await findAuthorizedRequestForUpdate(requestsDb, type, currentUserId, id);
         if (!authorizedRequest) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
 
         const canonicalRequestId = authorizedRequest.requestId || authorizedRequest.id;
-        const updated = await updateRequestStatus(type, canonicalRequestId, status);
+        const updated = await requestsDb.updateRequestStatus(type, canonicalRequestId, status);
 
         if (status === "ACCEPTED") {
             if (type === "INVITE" || type === "JOIN") {
@@ -390,14 +431,14 @@ export async function PUT(req: Request) {
                         : authorizedRequest.fromId || updated.userId;
 
                 if (!resolvedTeamId || !resolvedUserId) {
-                    await updateRequestStatus(type, canonicalRequestId, "PENDING").catch(() => undefined);
+                    await requestsDb.updateRequestStatus(type, canonicalRequestId, "PENDING").catch(() => undefined);
                     throw new Error("Missing team/user metadata for membership activation.");
                 }
 
                 try {
                     const { addMemberToTeam } = await import("@/lib/db/teams");
                     await addMemberToTeam(resolvedTeamId, resolvedUserId);
-                    await appendAuditLog({
+                    await auditDb.appendAuditLog({
                         category: "team",
                         event: "team_membership_changed",
                         actorUserId: currentUserId,
@@ -409,14 +450,14 @@ export async function PUT(req: Request) {
                         },
                     });
                 } catch (error) {
-                    await updateRequestStatus(type, canonicalRequestId, "PENDING").catch(() => undefined);
+                    await requestsDb.updateRequestStatus(type, canonicalRequestId, "PENDING").catch(() => undefined);
                     throw error;
                 }
             }
         }
 
         invalidateRequestsCache([updated.fromId, updated.toId, updated.userId, currentUserId]);
-        await appendAuditLog({
+        await auditDb.appendAuditLog({
             category: "request",
             event: "request_status_updated",
             actorUserId: currentUserId,
@@ -433,7 +474,7 @@ export async function PUT(req: Request) {
         });
 
         if (type === "CHAT" && status === "ACCEPTED") {
-            await appendAuditLog({
+            await auditDb.appendAuditLog({
                 category: "chat",
                 event: "connection_accepted",
                 actorUserId: currentUserId,
@@ -453,3 +494,4 @@ export async function PUT(req: Request) {
         );
     }
 }
+
