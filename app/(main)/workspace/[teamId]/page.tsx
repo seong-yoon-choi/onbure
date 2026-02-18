@@ -3557,6 +3557,8 @@ export default function WorkspacePage() {
     };
 
     const createWorkspaceGroup = (itemKeys: string[] = []) => {
+        if (workspaceMode !== "my") return null;
+
         const normalizedKeys = Array.from(
             new Set(itemKeys.filter((itemKey) => selectableCanvasItemMap.has(itemKey)))
         );
@@ -3600,7 +3602,7 @@ export default function WorkspacePage() {
         canvasY: number,
         mode: "default" | "groupOnly" = "default"
     ) => {
-        const canCreateGroup = selectedCanvasItemKeys.length > 0;
+        const canCreateGroup = workspaceMode === "my" && selectedCanvasItemKeys.length > 0;
         const canCreateAnnotation = mode !== "groupOnly";
         const canRemoveFromWorkspace = selectedCanvasItemKeys.length > 0;
         if (!canCreateGroup && !canCreateAnnotation && !canRemoveFromWorkspace) return;
@@ -6586,7 +6588,7 @@ export default function WorkspacePage() {
                     style={{ left: `${workspaceCanvasMenu.x}px`, top: `${workspaceCanvasMenu.y}px` }}
                     onMouseDown={(event) => event.stopPropagation()}
                 >
-                    {selectedCanvasItemKeys.length > 0 && (
+                    {workspaceMode === "my" && selectedCanvasItemKeys.length > 0 && (
                         <button
                             type="button"
                             className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
