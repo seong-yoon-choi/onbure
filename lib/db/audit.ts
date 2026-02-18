@@ -18,13 +18,40 @@ function normalizeText(value: unknown) {
     return String(value || "").trim();
 }
 
+function sanitizeMetadataValue(value: unknown, depth = 0): unknown {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "string") return value.slice(0, 500);
+    if (typeof value === "number" || typeof value === "boolean") return value;
+    if (value instanceof Date) return value.toISOString();
+    if (depth >= 2) return null;
+
+    if (Array.isArray(value)) {
+        return value.slice(0, 20).map((item) => sanitizeMetadataValue(item, depth + 1));
+    }
+
+    if (typeof value === "object") {
+        const source = value as Record<string, unknown>;
+        const normalized: Record<string, unknown> = {};
+        const entries = Object.entries(source).slice(0, 30);
+        for (const [key, nextValue] of entries) {
+            if (!key) continue;
+            const sanitized = sanitizeMetadataValue(nextValue, depth + 1);
+            if (sanitized === undefined) continue;
+            normalized[key.slice(0, 80)] = sanitized;
+        }
+        return normalized;
+    }
+
+    return String(value).slice(0, 500);
+}
+
 function normalizeMetadata(metadata: AuditLogInput["metadata"]) {
     if (!metadata || typeof metadata !== "object") return {};
     const normalized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(metadata)) {
         if (!key) continue;
         if (value === undefined) continue;
-        normalized[key] = value;
+        normalized[key.slice(0, 80)] = sanitizeMetadataValue(value);
     }
     return normalized;
 }
@@ -61,4 +88,3 @@ export async function appendAuditLog(input: AuditLogInput) {
         console.error("appendAuditLog failed", error);
     }
 }
-

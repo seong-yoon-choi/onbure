@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ChatWidget from "@/components/chat/ChatWidget";
 import CreateTeamModal from "@/components/teams/CreateTeamModal";
 import RequestsModal from "@/components/requests/RequestsModal";
+import { useAuditRealtime } from "@/lib/realtime/use-audit-realtime";
 
 const navItems = [
     { href: "/discovery", label: "Discovery", icon: Compass },
@@ -27,22 +28,16 @@ interface OpenChatDmRequest {
 interface ChatThreadListItem {
     threadId: string;
     type: "DM" | "TEAM";
+    participantsUserIds?: string[];
     lastMessageAt?: string;
+    lastSenderId?: string;
     dmSeenMap?: Record<string, number>;
     teamId?: string | null;
+    unreadCount?: number;
 }
 
-interface ChatMessageListItem {
-    senderId?: string;
-    createdAt?: string;
-}
-
-interface DmUserListItem {
-    userId: string;
-}
-
-interface TeamListItem {
-    teamId: string;
+interface ChatAlertsPayload {
+    threads?: ChatThreadListItem[];
 }
 
 interface RequestsPayload {
@@ -173,73 +168,15 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         }
 
         try {
-            const threadById = new Map<string, ChatThreadListItem>();
-            const addThreadCandidate = (candidate: Partial<ChatThreadListItem> | null | undefined, fallbackType: "DM" | "TEAM") => {
-                const threadId = String(candidate?.threadId || "").trim();
-                if (!threadId) return;
-
-                const prev = threadById.get(threadId);
-                const merged: ChatThreadListItem = {
-                    threadId,
-                    type: (String(candidate?.type || fallbackType).toUpperCase() === "TEAM" ? "TEAM" : "DM"),
-                    lastMessageAt: candidate?.lastMessageAt || prev?.lastMessageAt || "",
-                    dmSeenMap: (candidate?.dmSeenMap as Record<string, number> | undefined) || prev?.dmSeenMap || {},
-                    teamId: (candidate?.teamId as string | null | undefined) ?? prev?.teamId ?? null,
-                };
-                threadById.set(threadId, merged);
-            };
-
-            const [dmUsersRes, teamsRes] = await Promise.all([
-                fetch("/api/chat/dm-users"),
-                fetch("/api/chat/teams"),
-            ]);
-
-            const dmUsers = dmUsersRes.ok
-                ? (await dmUsersRes.json()) as DmUserListItem[]
-                : [];
-            const teams = teamsRes.ok
-                ? (await teamsRes.json()) as TeamListItem[]
-                : [];
-
-            if (dmUsers.length > 0) {
-                const dmThreads = await Promise.all(
-                    dmUsers.map(async (user) => {
-                        if (!user?.userId) return null;
-                        const res = await fetch("/api/chat/thread/dm", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ otherUserId: user.userId }),
-                        });
-                        if (!res.ok) return null;
-                        return (await res.json()) as ChatThreadListItem;
-                    })
-                );
-                for (const thread of dmThreads) {
-                    addThreadCandidate(thread, "DM");
-                }
+            const threadsRes = await fetch("/api/chat/alerts");
+            if (!threadsRes.ok) {
+                setChatAlertSafely(false);
+                return;
             }
-
-            if (teams.length > 0) {
-                const teamThreads = await Promise.all(
-                    teams.map(async (team) => {
-                        if (!team?.teamId) return null;
-                        const res = await fetch("/api/chat/thread/team", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ teamId: team.teamId }),
-                        });
-                        if (!res.ok) return null;
-                        return (await res.json()) as ChatThreadListItem;
-                    })
-                );
-                for (const thread of teamThreads) {
-                    addThreadCandidate(thread, "TEAM");
-                }
-            }
-
+            const payload = (await threadsRes.json()) as ChatAlertsPayload;
+            const threads = Array.isArray(payload.threads) ? payload.threads : [];
             const dmSeenMapLocal = readSeenMap(`onbure.chatWidget.dmSeenMap.${currentUserId}`);
             const teamSeenMap = readSeenMap(`onbure.chatWidget.teamSeenMap.${currentUserId}`);
-            const threads = Array.from(threadById.values());
             if (threads.length === 0) {
                 setChatAlertSafely(false);
                 return;
@@ -256,16 +193,12 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                     )
                     : Number(teamSeenMap[threadId] || 0);
 
-                const messagesRes = await fetch(`/api/chat/messages?threadId=${encodeURIComponent(threadId)}`);
-                if (!messagesRes.ok) continue;
-                const messages = (await messagesRes.json()) as ChatMessageListItem[];
-
-                const hasUnread = Array.isArray(messages) && messages.some((message) => {
-                    const senderId = String(message.senderId || "").trim();
-                    const isFromOther = Boolean(senderId) && senderId !== currentUserId;
-                    const createdAtEpoch = toEpochMs(message.createdAt);
-                    return isFromOther && createdAtEpoch > seenAt;
-                });
+                const senderId = String(thread.lastSenderId || "").trim();
+                const isFromOther = Boolean(senderId) && senderId !== currentUserId;
+                const latestAt = toEpochMs(thread.lastMessageAt);
+                const hasUnread =
+                    isFromOther &&
+                    (latestAt > seenAt || (thread.type === "DM" && Number(thread.unreadCount || 0) > 0));
 
                 if (hasUnread) {
                     setChatAlertSafely(true);
@@ -294,7 +227,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         }
 
         refreshTopbarAlerts();
-        const intervalId = window.setInterval(refreshTopbarAlerts, 15000);
+        const intervalId = window.setInterval(refreshTopbarAlerts, 45_000);
         const onFocus = () => refreshTopbarAlerts();
         const onVisibilityChange = () => {
             if (document.visibilityState === "visible") {
@@ -317,6 +250,34 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             window.removeEventListener("onbure-chat-connections-updated", onFocus as EventListener);
         };
     }, [sessionStatus, refreshTopbarAlerts]);
+
+    useAuditRealtime(sessionStatus === "authenticated" && Boolean(currentUserId), (row) => {
+        const category = String(row.category || "").toLowerCase();
+        if (category !== "chat" && category !== "request" && category !== "team") return;
+
+        const actorUserId = String(row.actor_user_id || "").trim();
+        const targetUserId = String(row.target_user_id || "").trim();
+        const eventName = String(row.event || "").trim().toLowerCase();
+        const teamId = String(row.team_id || "").trim();
+        const isMyTeamEvent = teamId.length > 0 && myTeams.some((team) => team.teamId === teamId);
+        const isDirectUserEvent =
+            actorUserId === currentUserId || targetUserId === currentUserId;
+
+        if (!isDirectUserEvent && !isMyTeamEvent) return;
+        if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
+        if (category === "request" || eventName.includes("request")) {
+            void fetchRequestsAlert();
+        }
+        if (category === "chat" || eventName.includes("chat") || eventName.includes("message")) {
+            void fetchChatAlert();
+        }
+        if (category === "team" && eventName.includes("membership")) {
+            void fetchMyTeams();
+            void fetchChatAlert();
+            void fetchRequestsAlert();
+        }
+    });
 
     useEffect(() => {
         if (sessionStatus !== "authenticated") return;

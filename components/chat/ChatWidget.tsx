@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { useAuditRealtime } from "@/lib/realtime/use-audit-realtime";
 
 const STORAGE_KEY = "onbure.chatWidget.rect";
 
@@ -194,6 +195,7 @@ export default function ChatWidget({
   const lastHandledOpenDmTokenRef = useRef<number | null>(null);
   const localDmSeenByThreadRef = useRef<Record<string, number>>({});
   const localTeamSeenByThreadRef = useRef<Record<string, number>>({});
+  const lastRealtimeRefreshAtRef = useRef(0);
 
   const defaults = { width: 420, height: 600 };
   const min = { width: 320, height: 420 };
@@ -701,6 +703,40 @@ export default function ChatWidget({
     }
   }, [fetchDmLastMessagePreview, fetchTeamLastMessagePreview]);
 
+  const refreshActiveThread = useCallback(async () => {
+    if (!activeThread) return;
+    const loadedMessages = await fetchMessages(activeThread.threadId, false);
+    if (activeThread.type === "dm" && activeDmUserId) {
+      const latest = loadedMessages[loadedMessages.length - 1];
+      await markCurrentUserSeen(activeThread.threadId, latest?.createdAt || Date.now());
+      setDmLastMessageByUserId((prev) => ({
+        ...prev,
+        [activeDmUserId]: previewText(latest?.bodyOriginal),
+      }));
+      setDmUnreadCountByUserId((prev) => ({
+        ...prev,
+        [activeDmUserId]: 0,
+      }));
+      return;
+    }
+
+    if (activeThread.type === "team" && activeTeamId) {
+      const latest = loadedMessages[loadedMessages.length - 1];
+      markTeamThreadSeen(activeThread.threadId, latest?.createdAt || Date.now());
+      setTeamLastMessageByTeamId((prev) => ({
+        ...prev,
+        [activeTeamId]: previewText(latest?.bodyOriginal),
+      }));
+      setTeamUnreadCountByTeamId((prev) => ({
+        ...prev,
+        [activeTeamId]: 0,
+      }));
+      return;
+    }
+
+    setDmReadReceipt(null);
+  }, [activeThread, activeDmUserId, activeTeamId, fetchMessages, markCurrentUserSeen, markTeamThreadSeen]);
+
   useEffect(() => {
     if (!isOpen) return;
     void fetchDirectory();
@@ -728,61 +764,47 @@ export default function ChatWidget({
     return () => window.removeEventListener("onbure-chat-connections-updated", onConnectionsUpdated);
   }, [isOpen, fetchDirectory]);
 
-  useEffect(() => {
-    if (!isOpen || dmUsers.length === 0) return;
-    const intervalId = window.setInterval(() => {
-      if (!isPageVisible()) return;
-      void fetchDmLastMessagePreview(dmUsers);
-    }, 12000);
-    return () => window.clearInterval(intervalId);
-  }, [isOpen, dmUsers, fetchDmLastMessagePreview]);
+  useAuditRealtime(isOpen && Boolean(currentUserId), (row) => {
+    if (!isOpen || !isPageVisible()) return;
 
-  useEffect(() => {
-    if (!isOpen || teams.length === 0) return;
-    const intervalId = window.setInterval(() => {
-      if (!isPageVisible()) return;
-      void fetchTeamLastMessagePreview(teams);
-    }, 12000);
-    return () => window.clearInterval(intervalId);
-  }, [isOpen, teams, fetchTeamLastMessagePreview]);
+    const category = String(row.category || "").toLowerCase();
+    if (category !== "chat" && category !== "request" && category !== "team") return;
 
-  useEffect(() => {
-    if (!isOpen || !activeThread) return;
-    const refreshActiveThread = async () => {
-      const loadedMessages = await fetchMessages(activeThread.threadId, false);
-      if (activeThread.type === "dm" && activeDmUserId) {
-        const latest = loadedMessages[loadedMessages.length - 1];
-        await markCurrentUserSeen(activeThread.threadId, latest?.createdAt || Date.now());
-        setDmLastMessageByUserId((prev) => ({
-          ...prev,
-          [activeDmUserId]: previewText(latest?.bodyOriginal),
-        }));
-        setDmUnreadCountByUserId((prev) => ({
-          ...prev,
-          [activeDmUserId]: 0,
-        }));
-      } else if (activeThread.type === "team" && activeTeamId) {
-        const latest = loadedMessages[loadedMessages.length - 1];
-        markTeamThreadSeen(activeThread.threadId, latest?.createdAt || Date.now());
-        setTeamLastMessageByTeamId((prev) => ({
-          ...prev,
-          [activeTeamId]: previewText(latest?.bodyOriginal),
-        }));
-        setTeamUnreadCountByTeamId((prev) => ({
-          ...prev,
-          [activeTeamId]: 0,
-        }));
-      } else {
-        setDmReadReceipt(null);
-      }
-    };
+    const actorUserId = String(row.actor_user_id || "").trim();
+    const targetUserId = String(row.target_user_id || "").trim();
+    const rowTeamId = String(row.team_id || "").trim();
+    const isDirectEvent = actorUserId === currentUserId || targetUserId === currentUserId;
+    const isMyTeamEvent = rowTeamId.length > 0 && teams.some((team) => team.teamId === rowTeamId);
+    if (!isDirectEvent && !isMyTeamEvent) return;
 
-    const id = setInterval(() => {
-      if (!isPageVisible()) return;
+    const now = Date.now();
+    if (now - lastRealtimeRefreshAtRef.current < 1200) return;
+    lastRealtimeRefreshAtRef.current = now;
+
+    const metadata = (row.metadata || {}) as Record<string, unknown>;
+    const metadataThreadId = String(metadata.threadId || "").trim();
+    if (activeThread?.threadId && metadataThreadId && activeThread.threadId === metadataThreadId) {
       void refreshActiveThread();
-    }, 8000);
-    return () => clearInterval(id);
-  }, [isOpen, activeThread, activeDmUserId, activeTeamId, fetchMessages, markCurrentUserSeen, markTeamThreadSeen]);
+      return;
+    }
+
+    void fetchDirectory();
+    if (activeThread) {
+      void refreshActiveThread();
+    }
+  });
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const intervalId = window.setInterval(() => {
+      if (!isPageVisible()) return;
+      void fetchDirectory();
+      if (activeThread) {
+        void refreshActiveThread();
+      }
+    }, 45_000);
+    return () => window.clearInterval(intervalId);
+  }, [isOpen, fetchDirectory, activeThread, refreshActiveThread]);
 
   useEffect(() => {
     if (!isOpen || !activeThread) return;

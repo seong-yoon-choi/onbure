@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDataBackend } from "@/lib/db/backend";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -8,6 +10,11 @@ function trimSlash(value: string) {
 }
 
 export async function GET() {
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return NextResponse.json({ enabled: false, backend: "supabase", url: "", anonKey: "" }, { status: 401 });
+    }
+
     const backend = getDataBackend();
     const url = String(process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "").trim();
     const anonKey = String(
@@ -22,4 +29,3 @@ export async function GET() {
         anonKey: enabled ? anonKey : "",
     });
 }
-

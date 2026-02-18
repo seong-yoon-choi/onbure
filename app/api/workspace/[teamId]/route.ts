@@ -32,6 +32,8 @@ interface WorkspaceSyncEntry {
     expiresAt: number;
 }
 
+type WorkspaceFileScope = "team" | "user";
+
 const WORKSPACE_CACHE_TTL_MS = 10_000;
 const WORKSPACE_SYNC_TTL_MS = 45_000;
 const WORKSPACE_PRESENCE_ACTIVE_MS = 35_000;
@@ -100,6 +102,10 @@ function rankStatus(status: string) {
     if (normalized.includes("active")) return 0;
     if (normalized.includes("away")) return 1;
     return 2;
+}
+
+function resolveWorkspaceFileScope(value: unknown): WorkspaceFileScope {
+    return String(value || "").trim().toLowerCase() === "my" ? "user" : "team";
 }
 
 function applyPresenceToMembers<T extends { userId: string; status: string; username?: string }>(
@@ -185,9 +191,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ teamId:
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
 
-        const [links, files, tasks, meetingNotes, agreementNotes, users] = await Promise.all([
+        const [links, files, myFiles, tasks, meetingNotes, agreementNotes, users] = await Promise.all([
             getLinks(teamId),
-            getFiles(teamId),
+            getFiles(teamId, { scope: "team" }),
+            getFiles(teamId, { scope: "user", ownerUserId: userId }),
             getTasks(teamId),
             getMeetingNotes(teamId),
             getAgreementNotes(teamId),
@@ -205,6 +212,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ teamId:
             team,
             links,
             files,
+            myFiles,
             tasks,
             meetingNotes,
             agreementNotes,
@@ -250,11 +258,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ teamId:
         if (!body || typeof body !== "object") {
             return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
         }
-        const { type, title, url, content, status } = body;
+        const { type, title, url, content, status, scope } = body;
+        const fileScope = resolveWorkspaceFileScope(scope);
         let createdFileId: string | null = null;
 
         if (type === "LINK") await createLink(teamId, title, url);
-        else if (type === "FILE") createdFileId = await createFile(teamId, title, url);
+        else if (type === "FILE") {
+            createdFileId = await createFile(teamId, title, url, {
+                scope: fileScope,
+                ownerUserId: fileScope === "user" ? currentUserId : undefined,
+            });
+        }
         else if (type === "TASK") await createTask(teamId, title, status);
         else if (type === "MEETING_NOTE") await createMeetingNote(teamId, title, content);
         else if (type === "AGREEMENT") await createAgreementNote(teamId, content);
@@ -266,7 +280,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ teamId:
             event: "workspace_item_created",
             actorUserId: currentUserId,
             teamId,
-            scope: "team",
+            scope: type === "FILE" ? fileScope : "team",
             metadata: {
                 type: String(type || ""),
                 title: String(title || "").slice(0, 120),
@@ -280,6 +294,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ teamId:
         }
         if (message === "Forbidden") {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+        const missingScopedFileColumns =
+            message.includes("PGRST204") &&
+            message.includes("workspace_files") &&
+            (message.includes("scope") || message.includes("owner_user_id"));
+        if (missingScopedFileColumns) {
+            return NextResponse.json(
+                {
+                    error: "workspace_files.scope / owner_user_id is missing. Run the Supabase migration and reload schema cache.",
+                },
+                { status: 400 }
+            );
         }
         console.error(error);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
@@ -304,12 +330,23 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ teamId
         if (!body || typeof body !== "object") {
             return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
         }
-        const { type, id, title, content, status, folderId, userId, role } = body;
+        const { type, id, title, content, status, folderId, userId, role, scope } = body;
+        const fileScope = resolveWorkspaceFileScope(scope);
 
         if (type === "TASK_STATUS") await updateTaskStatus(id, status);
         else if (type === "AGREEMENT") await updateAgreementNote(id, content);
-        else if (type === "FILE_RENAME") await renameFile(teamId, id, title);
-        else if (type === "FILE_FOLDER") await moveFileToFolder(teamId, id, folderId);
+        else if (type === "FILE_RENAME") {
+            await renameFile(teamId, id, title, {
+                scope: fileScope,
+                ownerUserId: fileScope === "user" ? currentUserId : undefined,
+            });
+        }
+        else if (type === "FILE_FOLDER") {
+            await moveFileToFolder(teamId, id, folderId, {
+                scope: fileScope,
+                ownerUserId: fileScope === "user" ? currentUserId : undefined,
+            });
+        }
         else if (type === "MEMBER_ROLE") {
             if (!currentUserId) {
                 return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -354,7 +391,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ teamId
             event: "workspace_item_updated",
             actorUserId: currentUserId,
             teamId,
-            scope: "team",
+            scope: type === "FILE_RENAME" || type === "FILE_FOLDER" ? fileScope : "team",
             metadata: {
                 type: String(type || ""),
                 id: String(id || ""),
@@ -375,10 +412,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ teamId
             message.includes("PGRST204") &&
             message.includes("folder_id") &&
             message.includes("workspace_files");
+        const missingScopedFileColumns =
+            message.includes("PGRST204") &&
+            message.includes("workspace_files") &&
+            (message.includes("scope") || message.includes("owner_user_id"));
         if (missingFolderColumn) {
             return NextResponse.json(
                 {
                     error: "workspace_files.folder_id is missing. Run the Supabase migration and reload schema cache.",
+                },
+                { status: 400 }
+            );
+        }
+        if (missingScopedFileColumns) {
+            return NextResponse.json(
+                {
+                    error: "workspace_files.scope / owner_user_id is missing. Run the Supabase migration and reload schema cache.",
                 },
                 { status: 400 }
             );
@@ -403,20 +452,24 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ teamI
         await assertActiveTeamMember(teamId, currentUserId);
 
         const body = await req.json().catch(() => ({}));
-        const { type, id } = body as { type?: string; id?: string };
+        const { type, id, scope } = body as { type?: string; id?: string; scope?: unknown };
+        const fileScope = resolveWorkspaceFileScope(scope);
 
         if (type !== "FILE" || !String(id || "").trim()) {
             return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
         }
 
-        await deleteFile(teamId, String(id));
+        await deleteFile(teamId, String(id), {
+            scope: fileScope,
+            ownerUserId: fileScope === "user" ? currentUserId : undefined,
+        });
         invalidateWorkspaceTeamCache(teamId);
         await appendAuditLog({
             category: "workspace",
             event: "workspace_item_deleted",
             actorUserId: currentUserId,
             teamId,
-            scope: "team",
+            scope: fileScope,
             metadata: {
                 type: "FILE",
                 id: String(id || ""),
@@ -430,6 +483,18 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ teamI
         }
         if (message === "Forbidden") {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+        const missingScopedFileColumns =
+            message.includes("PGRST204") &&
+            message.includes("workspace_files") &&
+            (message.includes("scope") || message.includes("owner_user_id"));
+        if (missingScopedFileColumns) {
+            return NextResponse.json(
+                {
+                    error: "workspace_files.scope / owner_user_id is missing. Run the Supabase migration and reload schema cache.",
+                },
+                { status: 400 }
+            );
         }
         console.error(error);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });

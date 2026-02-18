@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { User as UserIcon, Save, Loader2, X } from "lucide-react";
+import { User as UserIcon, Save, Loader2, Pencil, X } from "lucide-react";
 import { useTheme } from "@/components/providers";
 import { AlertModal, ConfirmModal } from "@/components/ui/modal";
 
@@ -306,14 +306,18 @@ export default function ProfilePage() {
                                 className="block text-2xl font-bold text-[var(--fg)] bg-transparent border-b border-[var(--ring)] focus:outline-none"
                             />
                         ) : (
-                            <button
-                                type="button"
-                                onClick={startUsernameEdit}
-                                className="block text-2xl font-bold text-[var(--fg)] hover:underline underline-offset-4 text-left"
-                                title="Click to edit username"
-                            >
-                                {profile.username || "Set username"}
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <h1 className="text-2xl font-bold text-[var(--fg)]">{profile.username || "Set username"}</h1>
+                                <button
+                                    type="button"
+                                    onClick={startUsernameEdit}
+                                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--card-bg-hover)] hover:text-[var(--fg)] transition-colors"
+                                    title="Edit username"
+                                    aria-label="Edit username"
+                                >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                            </div>
                         )}
                         {isEmailEditing ? (
                             <input
@@ -334,14 +338,18 @@ export default function ProfilePage() {
                                 className="block text-[var(--muted)] bg-transparent border-b border-[var(--ring)] focus:outline-none"
                             />
                         ) : (
-                            <button
-                                type="button"
-                                onClick={startEmailEdit}
-                                className="block text-[var(--muted)] hover:underline underline-offset-4 text-left"
-                                title="Click to edit email"
-                            >
-                                {profile.email}
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <p className="text-[var(--muted)]">{profile.email || "-"}</p>
+                                <button
+                                    type="button"
+                                    onClick={startEmailEdit}
+                                    className="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--card-bg-hover)] hover:text-[var(--fg)] transition-colors"
+                                    title="Edit email"
+                                    aria-label="Edit email"
+                                >
+                                    <Pencil className="h-3 w-3" />
+                                </button>
+                            </div>
                         )}
                         <p className="text-xs text-[var(--muted)]">{profile.publicCode || "-"}</p>
                     </div>

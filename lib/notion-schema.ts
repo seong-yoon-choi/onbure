@@ -1,35 +1,23 @@
-import { notion } from "./notion-client";
+const REMOVED_BACKEND_ERROR =
+    "Legacy schema adapter has been removed. Use Supabase schema directly.";
 
-// Simple in-memory cache for schema (metadata) to avoid hitting Notion API on every request
-// In a serverless env (Vercel), this persists only for the lambda lifetime.
-const schemaCache: Record<string, { schema: any; fetchedAt: number }> = {};
-const SCHEMA_CACHE_TTL_MS = 30_000;
-
-export async function getDatabaseSchema(databaseId: string, options?: { forceRefresh?: boolean }) {
-    const forceRefresh = Boolean(options?.forceRefresh);
-    const cached = schemaCache[databaseId];
-    const isFresh = cached && Date.now() - cached.fetchedAt < SCHEMA_CACHE_TTL_MS;
-
-    if (!forceRefresh && isFresh) {
-        return cached.schema;
-    }
-
-    const db = await notion.databases.retrieve(databaseId);
-    schemaCache[databaseId] = {
-        schema: db,
-        fetchedAt: Date.now(),
-    };
-    return db;
+export async function getDatabaseSchema(
+    _databaseId: string,
+    _options?: { forceRefresh?: boolean }
+): Promise<any> {
+    void _databaseId;
+    void _options;
+    throw new Error(REMOVED_BACKEND_ERROR);
 }
 
 export function getTitlePropertyName(schema: any): string {
-    const props = schema.properties;
+    const props = schema?.properties || {};
     for (const key in props) {
         if (props[key].type === "title") {
             return key;
         }
     }
-    throw new Error(`Database ${schema.id} has no Title property (impossible in Notion)`);
+    throw new Error("No title property found in schema.");
 }
 
 export function getPropertyType(schema: any, propName: string): string | null {

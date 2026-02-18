@@ -15,10 +15,12 @@ import {
     MessageCircle,
     MessageSquare,
     NotebookPen,
+    Plus,
     UserRound,
     X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuditRealtime } from "@/lib/realtime/use-audit-realtime";
 
 interface WorkspaceTeam {
     name: string;
@@ -65,6 +67,7 @@ interface WorkspaceData {
     team: WorkspaceTeam;
     links: WorkspaceLink[];
     files: WorkspaceFile[];
+    myFiles?: WorkspaceFile[];
     tasks: WorkspaceTask[];
     meetingNotes: unknown[];
     agreementNotes: AgreementNote[];
@@ -147,6 +150,7 @@ interface FileItemMenuState {
     x: number;
     y: number;
     fileId: string;
+    shareSubmenuLeft?: boolean;
 }
 
 interface AnnotationItemMenuState {
@@ -159,6 +163,18 @@ interface CanvasFileItemMenuState {
     x: number;
     y: number;
     fileId: string;
+    shareSubmenuLeft?: boolean;
+}
+
+interface FileShareDragState {
+    fileId: string;
+    fileName: string;
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    hoverUserId: string | null;
+    hoverUsername: string;
 }
 
 interface GroupMenuState {
@@ -225,6 +241,16 @@ interface RoleChangeConfirmState {
     targetUsername: string;
     nextRole: "Admin" | "Member";
     isSubmitting: boolean;
+}
+
+interface FileShareConfirmState {
+    open: boolean;
+    fileId: string;
+    fileName: string;
+    toUserId: string;
+    toUsername: string;
+    isSubmitting: boolean;
+    isResend: boolean;
 }
 
 interface WorkspaceCanvasMenuState {
@@ -326,6 +352,7 @@ const CANVAS_PADDING = 16;
 const CANVAS_COMMENT_PREVIEW_WIDTH = 224;
 const CANVAS_COMMENT_PREVIEW_HEIGHT = 44;
 const CANVAS_PLACEMENT_SEPARATOR = "::";
+const GROUP_HINT_TOOLTIP_TEXT = "ctrl을 누르고 아이템을 드래그 하세요";
 
 function buildCanvasItemKey(kind: WorkspaceGroupItemKind, id: string) {
     return `${kind}:${id}`;
@@ -623,6 +650,7 @@ export default function WorkspacePage() {
     const [fileItemMenu, setFileItemMenu] = useState<FileItemMenuState | null>(null);
     const [annotationItemMenu, setAnnotationItemMenu] = useState<AnnotationItemMenuState | null>(null);
     const [canvasFileItemMenu, setCanvasFileItemMenu] = useState<CanvasFileItemMenuState | null>(null);
+    const [fileShareDrag, setFileShareDrag] = useState<FileShareDragState | null>(null);
     const [groupMenu, setGroupMenu] = useState<GroupMenuState | null>(null);
     const [groupEntryMenu, setGroupEntryMenu] = useState<GroupEntryMenuState | null>(null);
     const [groupDragPreview, setGroupDragPreview] = useState<GroupDragPreviewState | null>(null);
@@ -656,6 +684,15 @@ export default function WorkspacePage() {
         targetUsername: "",
         nextRole: "Member",
         isSubmitting: false,
+    });
+    const [fileShareConfirm, setFileShareConfirm] = useState<FileShareConfirmState>({
+        open: false,
+        fileId: "",
+        fileName: "",
+        toUserId: "",
+        toUsername: "",
+        isSubmitting: false,
+        isResend: false,
     });
     const [workspaceCanvasMenu, setWorkspaceCanvasMenu] = useState<WorkspaceCanvasMenuState | null>(null);
     const [annotations, setAnnotations] = useState<WorkspaceAnnotation[]>([]);
@@ -755,6 +792,7 @@ export default function WorkspacePage() {
         workspaceMode === "my" ? myHiddenCanvasItemsStorageKey : teamHiddenCanvasItemsStorageKey;
     const annotationKindForMode: WorkspaceAnnotationKind = workspaceMode === "my" ? "memo" : "comment";
     const annotationActionLabel = workspaceMode === "my" ? "메모 생성" : "코멘트 남기기";
+    const workspaceFileScope = workspaceMode === "my" ? "my" : "team";
 
     const fetchData = React.useCallback(async (options?: { silent?: boolean }) => {
         if (!teamId) return;
@@ -798,12 +836,23 @@ export default function WorkspacePage() {
         const interval = window.setInterval(() => {
             if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
             void fetchData({ silent: true });
-        }, 15_000);
+        }, 45_000);
 
         return () => {
             window.clearInterval(interval);
         };
     }, [teamId, fetchData]);
+
+    useAuditRealtime(Boolean(teamId), (row) => {
+        const rowCategory = String(row.category || "").toLowerCase();
+        if (rowCategory !== "workspace" && rowCategory !== "team" && rowCategory !== "request") return;
+
+        const rowTeamId = String(row.team_id || "").trim();
+        if (!rowTeamId || rowTeamId !== teamId) return;
+        if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
+        void fetchData({ silent: true });
+    });
 
     useEffect(() => {
         if (typeof window === "undefined") return;
@@ -922,6 +971,83 @@ export default function WorkspacePage() {
             window.removeEventListener("keydown", closeOnKey);
         };
     }, [canvasFileItemMenu]);
+
+    useEffect(() => {
+        if (!fileShareDrag) return;
+        const filesForShare = Array.isArray(workspaceMode === "my" ? data?.myFiles : data?.files)
+            ? workspaceMode === "my"
+                ? (data?.myFiles ?? [])
+                : (data?.files ?? [])
+            : [];
+        const membersForShare = Array.isArray(data?.members) ? data.members : [];
+
+        const resolveDropTarget = (event: PointerEvent) => {
+            const element = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
+            const target = element?.closest("[data-workspace-member-drop-target='true']") as HTMLElement | null;
+            const userId = String(target?.dataset.memberUserId || "").trim();
+            if (!userId) {
+                return { userId: null as string | null, username: "" };
+            }
+            const username = String(target?.dataset.memberUsername || "").trim() || userId;
+            return { userId, username };
+        };
+
+        const handlePointerMove = (event: PointerEvent) => {
+            event.preventDefault();
+            const drop = resolveDropTarget(event);
+            setFileShareDrag((prev) =>
+                prev
+                    ? {
+                          ...prev,
+                          currentX: event.clientX,
+                          currentY: event.clientY,
+                          hoverUserId: drop.userId,
+                          hoverUsername: drop.username,
+                      }
+                    : prev
+            );
+        };
+
+        const handlePointerUp = (event: PointerEvent) => {
+            event.preventDefault();
+            const drop = resolveDropTarget(event);
+            if (drop.userId) {
+                const targetFile = filesForShare.find((file) => file.id === fileShareDrag.fileId);
+                const targetMember = membersForShare.find((member) => member.userId === drop.userId);
+                const viewerUserId = String(data?.viewerUserId || "");
+                if (
+                    targetFile &&
+                    targetMember &&
+                    workspaceMode === "my" &&
+                    drop.userId !== viewerUserId
+                ) {
+                    setFileShareConfirm({
+                        open: true,
+                        fileId: targetFile.id,
+                        fileName: String(targetFile.title || "").trim() || "Untitled",
+                        toUserId: drop.userId,
+                        toUsername: targetMember.username || targetMember.userId,
+                        isSubmitting: false,
+                        isResend: false,
+                    });
+                }
+            }
+            setFileShareDrag(null);
+        };
+
+        const handlePointerCancel = () => {
+            setFileShareDrag(null);
+        };
+
+        window.addEventListener("pointermove", handlePointerMove, { passive: false });
+        window.addEventListener("pointerup", handlePointerUp, { passive: false });
+        window.addEventListener("pointercancel", handlePointerCancel);
+        return () => {
+            window.removeEventListener("pointermove", handlePointerMove);
+            window.removeEventListener("pointerup", handlePointerUp);
+            window.removeEventListener("pointercancel", handlePointerCancel);
+        };
+    }, [fileShareDrag, data?.files, data?.myFiles, data?.members, workspaceMode, data?.viewerUserId]);
 
     useEffect(() => {
         if (!workspaceCanvasMenu) return;
@@ -1229,7 +1355,10 @@ export default function WorkspacePage() {
         window.localStorage.setItem(activeHiddenCanvasItemsStorageKey, JSON.stringify(hiddenCanvasItemKeys));
     }, [hiddenCanvasItemKeys, activeHiddenCanvasItemsStorageKey]);
 
-    const currentFiles = useMemo(() => data?.files || [], [data?.files]);
+    const currentFiles = useMemo(
+        () => (workspaceMode === "my" ? data?.myFiles || [] : data?.files || []),
+        [workspaceMode, data?.myFiles, data?.files]
+    );
     const members = useMemo(() => (Array.isArray(data?.members) ? data.members : []), [data?.members]);
     const annotationsForCurrentMode = useMemo(
         () => annotations.filter((annotation) => annotation.kind === annotationKindForMode),
@@ -2168,7 +2297,12 @@ export default function WorkspacePage() {
         const res = await fetch(`/api/workspace/${teamId}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ type: "FILE", title: normalizedTitle, url: String(url || "") }),
+            body: JSON.stringify({
+                type: "FILE",
+                title: normalizedTitle,
+                url: String(url || ""),
+                scope: workspaceFileScope,
+            }),
         });
         if (!res.ok) return null;
         try {
@@ -2183,6 +2317,7 @@ export default function WorkspacePage() {
         if (!teamId) return false;
         const form = new FormData();
         form.append("file", file);
+        form.append("scope", workspaceFileScope);
 
         const res = await fetch(`/api/workspace/${teamId}/files/upload`, {
             method: "POST",
@@ -2465,6 +2600,7 @@ export default function WorkspacePage() {
                     type: "FILE_FOLDER",
                     id: fileId,
                     folderId: normalizedFolderId,
+                    scope: workspaceFileScope,
                 }),
             });
 
@@ -2488,6 +2624,16 @@ export default function WorkspacePage() {
 
             setData((prev) => {
                 if (!prev) return prev;
+                if (workspaceMode === "my") {
+                    return {
+                        ...prev,
+                        myFiles: (prev.myFiles || []).map((file) =>
+                            file.id === fileId
+                                ? { ...file, folderId: normalizedFolderId || undefined }
+                                : file
+                        ),
+                    };
+                }
                 return {
                     ...prev,
                     files: prev.files.map((file) =>
@@ -2521,6 +2667,7 @@ export default function WorkspacePage() {
                     type: "FILE_RENAME",
                     id: fileId,
                     title: normalizedTitle,
+                    scope: workspaceFileScope,
                 }),
             });
 
@@ -2528,6 +2675,14 @@ export default function WorkspacePage() {
 
             setData((prev) => {
                 if (!prev) return prev;
+                if (workspaceMode === "my") {
+                    return {
+                        ...prev,
+                        myFiles: (prev.myFiles || []).map((file) =>
+                            file.id === fileId ? { ...file, title: normalizedTitle } : file
+                        ),
+                    };
+                }
                 return {
                     ...prev,
                     files: prev.files.map((file) =>
@@ -3356,6 +3511,8 @@ export default function WorkspacePage() {
     };
 
     const createWorkspaceGroup = (itemKeys: string[] = []) => {
+        if (workspaceMode !== "my") return null;
+
         const normalizedKeys = Array.from(
             new Set(itemKeys.filter((itemKey) => selectableCanvasItemMap.has(itemKey)))
         );
@@ -3399,8 +3556,12 @@ export default function WorkspacePage() {
         canvasY: number,
         mode: "default" | "groupOnly" = "default"
     ) => {
+        const canCreateGroup = workspaceMode === "my" && selectedCanvasItemKeys.length > 0;
+        const canCreateAnnotation = mode !== "groupOnly";
+        if (!canCreateGroup && !canCreateAnnotation) return;
+
         const menuWidth = 184;
-        const menuHeight = mode === "groupOnly" ? 44 : 86;
+        const menuHeight = (canCreateGroup ? 44 : 0) + (canCreateAnnotation ? 44 : 0);
         const gap = 8;
         const x = Math.min(Math.max(clientX, gap), window.innerWidth - menuWidth - gap);
         const y = Math.min(Math.max(clientY, gap), window.innerHeight - menuHeight - gap);
@@ -3425,6 +3586,7 @@ export default function WorkspacePage() {
     };
 
     const createEmptyWorkspaceGroupFromSidebar = () => {
+        if (workspaceMode !== "my") return;
         createWorkspaceGroup([]);
         setGroupMenu(null);
         setGroupEntryMenu(null);
@@ -3644,6 +3806,7 @@ export default function WorkspacePage() {
     };
 
     const openGroupsContextMenu = (event: React.MouseEvent) => {
+        if (workspaceMode !== "my") return;
         event.preventDefault();
         event.stopPropagation();
         const menuWidth = 148;
@@ -3984,7 +4147,35 @@ export default function WorkspacePage() {
         const target = event.target as HTMLElement | null;
         if (!target) return;
         if (target.closest("[data-sidebar-select-item='true']")) return;
-        if (target.closest("button, input, textarea, a, [data-workspace-canvas-menu='true']")) return;
+        if (
+            target.closest(
+                "button, input, textarea, a, [data-workspace-canvas-menu='true'], [data-workspace-group-menu='true'], [data-workspace-group-entry-menu='true']"
+            )
+        ) {
+            return;
+        }
+
+        const hasOpenMenu = Boolean(
+            canvasMenu ||
+                groupMenu ||
+                groupEntryMenu ||
+                fileItemMenu ||
+                canvasFileItemMenu ||
+                profileMenu ||
+                annotationItemMenu ||
+                workspaceCanvasMenu
+        );
+        if (hasOpenMenu) {
+            setCanvasMenu(null);
+            setGroupMenu(null);
+            setGroupEntryMenu(null);
+            setFileItemMenu(null);
+            setCanvasFileItemMenu(null);
+            setProfileMenu(null);
+            setAnnotationItemMenu(null);
+            setWorkspaceCanvasMenu(null);
+            return;
+        }
 
         const container =
             section === "files" ? filesSidebarSelectionRef.current : groupsSidebarSelectionRef.current;
@@ -4069,21 +4260,32 @@ export default function WorkspacePage() {
             return;
         }
 
+        const sourceFileId = extractCanvasPlacementSourceId(fileId);
+        const targetFile = currentFiles.find((file) => file.id === sourceFileId);
+        const canSendFileFromMenu = Boolean(
+            workspaceMode === "my" &&
+                targetFile &&
+                members.some((member) => member.userId !== data?.viewerUserId)
+        );
         const fileItemKey = buildCanvasItemKey("file", fileId);
         const canUngroupFromMenu = groupedItemKeySet.has(fileItemKey);
-        const menuWidth = 154;
-        const menuHeight = canUngroupFromMenu ? 120 : 82;
+        const menuWidth = 172;
+        const submenuWidth = 188;
+        const menuHeight = (canUngroupFromMenu ? 120 : 82) + (canSendFileFromMenu ? 34 : 0);
         const gap = 8;
         const x = Math.min(Math.max(event.clientX, gap), window.innerWidth - menuWidth - gap);
         const y = Math.min(Math.max(event.clientY, gap), window.innerHeight - menuHeight - gap);
+        const shareSubmenuLeft =
+            canSendFileFromMenu && x + menuWidth + submenuWidth + gap > window.innerWidth;
         setProfileMenu(null);
         setCanvasMenu(null);
         setFileItemMenu(null);
+        setFileShareDrag(null);
         setWorkspaceCanvasMenu(null);
         setAnnotationItemMenu(null);
         setGroupMenu(null);
         setGroupEntryMenu(null);
-        setCanvasFileItemMenu({ x, y, fileId });
+        setCanvasFileItemMenu({ x, y, fileId, shareSubmenuLeft });
     };
 
     const openGroupOnlyCanvasMenuAtPointer = (event: React.MouseEvent) => {
@@ -4319,6 +4521,7 @@ export default function WorkspacePage() {
         setCanvasMenu(null);
         setFileItemMenu(null);
         setCanvasFileItemMenu(null);
+        setFileShareDrag(null);
         setWorkspaceCanvasMenu(null);
         setAnnotationItemMenu(null);
         setGroupMenu(null);
@@ -4419,6 +4622,7 @@ export default function WorkspacePage() {
         setProfileMenu(null);
         setFileItemMenu(null);
         setCanvasFileItemMenu(null);
+        setFileShareDrag(null);
         setWorkspaceCanvasMenu(null);
         setAnnotationItemMenu(null);
         setGroupMenu(null);
@@ -4431,19 +4635,28 @@ export default function WorkspacePage() {
         event.stopPropagation();
         const targetFile = currentFiles.find((file) => file.id === fileId);
         const isFolder = Boolean(targetFile && isFolderEntry(targetFile));
+        const canSendFileFromMenu = Boolean(
+            workspaceMode === "my" &&
+                targetFile &&
+                members.some((member) => member.userId !== data?.viewerUserId)
+        );
         const menuWidth = 172;
-        const menuHeight = isFolder ? 116 : 188;
+        const submenuWidth = 188;
+        const menuHeight = isFolder ? 116 : 188 + (canSendFileFromMenu ? 34 : 0);
         const gap = 8;
         const x = Math.min(Math.max(event.clientX, gap), window.innerWidth - menuWidth - gap);
         const y = Math.min(Math.max(event.clientY, gap), window.innerHeight - menuHeight - gap);
+        const shareSubmenuLeft =
+            canSendFileFromMenu && x + menuWidth + submenuWidth + gap > window.innerWidth;
         setProfileMenu(null);
         setCanvasMenu(null);
         setCanvasFileItemMenu(null);
+        setFileShareDrag(null);
         setWorkspaceCanvasMenu(null);
         setAnnotationItemMenu(null);
         setGroupMenu(null);
         setGroupEntryMenu(null);
-        setFileItemMenu({ x, y, fileId });
+        setFileItemMenu({ x, y, fileId, shareSubmenuLeft });
     };
 
     const handleDeleteFileFromMenu = async () => {
@@ -4455,7 +4668,7 @@ export default function WorkspacePage() {
             const res = await fetch(`/api/workspace/${teamId}`, {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: "FILE", id: targetFileId }),
+                body: JSON.stringify({ type: "FILE", id: targetFileId, scope: workspaceFileScope }),
             });
 
             if (!res.ok) {
@@ -4475,6 +4688,144 @@ export default function WorkspacePage() {
                 title: "Delete failed",
                 message: "Unable to delete this item.",
             });
+        }
+    };
+
+    const openFileShareConfirm = (file: WorkspaceFile, toUserId: string) => {
+        const targetUserId = String(toUserId || "").trim();
+        const targetMember = members.find((member) => member.userId === targetUserId);
+        if (!targetUserId || !targetMember) return;
+        if (targetUserId === data?.viewerUserId) return;
+
+        const rawTitle = String(file.title || "").trim();
+        const displayName = isFolderEntry(file)
+            ? getFolderDisplayName(rawTitle || "Folder")
+            : rawTitle || "Untitled";
+        setFileShareConfirm({
+            open: true,
+            fileId: file.id,
+            fileName: displayName,
+            toUserId: targetUserId,
+            toUsername: targetMember.username || targetUserId,
+            isSubmitting: false,
+            isResend: false,
+        });
+    };
+
+    const beginFileShareDrag = (event: React.PointerEvent<HTMLElement>, file: WorkspaceFile) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (workspaceMode !== "my") return;
+        if (fileShareTargetMembers.length === 0) return;
+
+        const triggerRect = event.currentTarget.getBoundingClientRect();
+        const originX = triggerRect.left + triggerRect.width / 2;
+        const originY = triggerRect.top + triggerRect.height / 2;
+
+        setProfileMenu(null);
+        setCanvasMenu(null);
+        setFileItemMenu(null);
+        setCanvasFileItemMenu(null);
+        setFileShareDrag({
+            fileId: file.id,
+            fileName: String(file.title || "").trim() || "Untitled",
+            startX: originX,
+            startY: originY,
+            currentX: event.clientX,
+            currentY: event.clientY,
+            hoverUserId: null,
+            hoverUsername: "",
+        });
+        setWorkspaceCanvasMenu(null);
+        setAnnotationItemMenu(null);
+        setGroupMenu(null);
+        setGroupEntryMenu(null);
+    };
+
+    const openFileShareFromSidebarMenu = (toUserId: string) => {
+        if (!fileItemMenu) return;
+        const targetFile = currentFiles.find((file) => file.id === fileItemMenu.fileId);
+        setFileItemMenu(null);
+        if (!targetFile || workspaceMode !== "my") return;
+        openFileShareConfirm(targetFile, toUserId);
+    };
+
+    const openFileShareFromCanvasMenu = (toUserId: string) => {
+        if (!canvasFileItemMenu) return;
+        const sourceFileId = extractCanvasPlacementSourceId(canvasFileItemMenu.fileId);
+        const targetFile = currentFiles.find((file) => file.id === sourceFileId);
+        setCanvasFileItemMenu(null);
+        if (!targetFile || workspaceMode !== "my") return;
+        openFileShareConfirm(targetFile, toUserId);
+    };
+
+    const closeFileShareConfirm = () => {
+        setFileShareConfirm((prev) => (prev.isSubmitting ? prev : { ...prev, open: false }));
+    };
+
+    const submitFileShareConfirm = async () => {
+        if (!teamId || !fileShareConfirm.open || fileShareConfirm.isSubmitting) return;
+        const fileId = String(fileShareConfirm.fileId || "").trim();
+        const toUserId = String(fileShareConfirm.toUserId || "").trim();
+        if (!fileId || !toUserId) return;
+
+        setFileShareConfirm((prev) => ({ ...prev, isSubmitting: true }));
+        try {
+            const res = await fetch("/api/requests", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    type: "FILE",
+                    teamId,
+                    fileId,
+                    fileName: fileShareConfirm.fileName,
+                    toId: toUserId,
+                    message: "",
+                    forceResend: fileShareConfirm.isResend,
+                }),
+            });
+            const payload = await res.json().catch(() => ({}));
+
+            if (res.ok) {
+                setFileShareConfirm({
+                    open: false,
+                    fileId: "",
+                    fileName: "",
+                    toUserId: "",
+                    toUsername: "",
+                    isSubmitting: false,
+                    isResend: false,
+                });
+                setNotice({
+                    open: true,
+                    title: "파일 전송 완료",
+                    message: `${fileShareConfirm.toUsername}님에게 파일 요청을 보냈습니다.`,
+                });
+                return;
+            }
+
+            if (res.status === 409 && payload?.code === "FILE_ALREADY_SENT" && !fileShareConfirm.isResend) {
+                setFileShareConfirm((prev) => ({
+                    ...prev,
+                    isSubmitting: false,
+                    isResend: true,
+                }));
+                return;
+            }
+
+            setNotice({
+                open: true,
+                title: "파일 전송 실패",
+                message: String(payload?.error || "파일 전송 요청을 보낼 수 없습니다."),
+            });
+            setFileShareConfirm((prev) => ({ ...prev, isSubmitting: false }));
+        } catch {
+            setNotice({
+                open: true,
+                title: "파일 전송 실패",
+                message: "파일 전송 요청을 보낼 수 없습니다.",
+            });
+            setFileShareConfirm((prev) => ({ ...prev, isSubmitting: false }));
         }
     };
 
@@ -4621,10 +4972,27 @@ export default function WorkspacePage() {
         ? currentFiles.find((file) => file.id === draggingSidebarFileId)
         : null;
     const isDraggingPlainFile = Boolean(draggingSidebarFile && !isFolderEntry(draggingSidebarFile));
+    const fileShareTargetMembers = members.filter((member) => member.userId !== data.viewerUserId);
     const fileMenuTarget = fileItemMenu
         ? currentFiles.find((file) => file.id === fileItemMenu.fileId) || null
         : null;
     const fileMenuTargetIsFolder = Boolean(fileMenuTarget && isFolderEntry(fileMenuTarget));
+    const canvasFileMenuSourceId = canvasFileItemMenu
+        ? extractCanvasPlacementSourceId(canvasFileItemMenu.fileId)
+        : "";
+    const canvasFileMenuTarget = canvasFileMenuSourceId
+        ? currentFiles.find((file) => file.id === canvasFileMenuSourceId) || null
+        : null;
+    const canSendFileFromSidebarMenu = Boolean(
+        workspaceMode === "my" &&
+            fileMenuTarget &&
+            fileShareTargetMembers.length > 0
+    );
+    const canSendFileFromCanvasMenu = Boolean(
+        workspaceMode === "my" &&
+            canvasFileMenuTarget &&
+            fileShareTargetMembers.length > 0
+    );
     const moveFolderOptions = folderItems.filter((folder) => folder.id !== moveFileModal.fileId);
     const canUngroupCanvasFileItem = Boolean(
         canvasFileItemMenu &&
@@ -4891,7 +5259,7 @@ export default function WorkspacePage() {
                     )}
                     {resolvedWorkspaceGroups.length === 0 ? (
                         <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-[var(--muted)]">
-                            우클릭으로 그룹을 만들어보세요
+                            {workspaceMode === "my" ? "우클릭으로 그룹을 만들어보세요" : "그룹이 없습니다."}
                         </p>
                     ) : (
                         <div className="max-h-[66vh] space-y-1 overflow-auto pr-1">
@@ -4999,7 +5367,7 @@ export default function WorkspacePage() {
                                                             !
                                                         </span>
                                                         <span className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded border border-[var(--border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] text-[var(--fg)] shadow-md group-hover:block">
-                                                            ctrl을 누르고 아이콘을 드래그 하세요
+                                                            {GROUP_HINT_TOOLTIP_TEXT}
                                                         </span>
                                                     </span>
                                                 )}
@@ -5171,6 +5539,11 @@ export default function WorkspacePage() {
                         sortedMembers.map((member) => {
                             const presence = resolvePresence(member.status);
                             const isMe = Boolean(data.viewerUserId) && member.userId === data.viewerUserId;
+                            const isShareHover = Boolean(
+                                fileShareDrag &&
+                                    fileShareDrag.hoverUserId === member.userId &&
+                                    member.userId !== data.viewerUserId
+                            );
                             const dotClass =
                                 presence === "active"
                                     ? "bg-sky-500"
@@ -5182,9 +5555,15 @@ export default function WorkspacePage() {
                                 <Card
                                     key={member.id}
                                     draggable
+                                    data-workspace-member-drop-target="true"
+                                    data-member-user-id={member.userId}
+                                    data-member-username={member.username || member.userId}
                                     onDragStart={(event) => handleMemberDragStart(event, member)}
                                     onContextMenu={(event) => openProfileMenu(event, member.userId)}
-                                    className="p-2 cursor-grab active:cursor-grabbing"
+                                    className={cn(
+                                        "p-2 cursor-grab active:cursor-grabbing",
+                                        isShareHover && "ring-1 ring-[var(--primary)] bg-[var(--card-bg-hover)]"
+                                    )}
                                 >
                                     <div className="flex items-center gap-2">
                                         <span className={cn("inline-block h-2.5 w-2.5 rounded-full", dotClass)} />
@@ -5459,6 +5838,17 @@ export default function WorkspacePage() {
                                 >
                                     <X className="h-3.5 w-3.5" />
                                 </button>
+                                {workspaceMode === "my" && fileShareTargetMembers.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onPointerDown={(event) => beginFileShareDrag(event, file)}
+                                        className="absolute -left-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card-bg)] text-[var(--fg)] shadow-sm hover:border-[var(--primary)] hover:text-[var(--primary)]"
+                                        aria-label={`Share ${displayTitle}`}
+                                        title="파일 보내기"
+                                    >
+                                        <Plus className="h-3.5 w-3.5" />
+                                    </button>
+                                )}
                                 {isFolder && (
                                     <button
                                         type="button"
@@ -5534,12 +5924,20 @@ export default function WorkspacePage() {
                                     ? "bg-amber-400"
                                     : "bg-slate-400";
                         const isMe = Boolean(data.viewerUserId) && member.userId === data.viewerUserId;
+                        const isShareHover = Boolean(
+                            fileShareDrag &&
+                                fileShareDrag.hoverUserId === member.userId &&
+                                member.userId !== data.viewerUserId
+                        );
                         const isSelected = selectedCanvasItemKeySet.has(buildCanvasItemKey("member", placementId));
 
                         return (
                             <div
                                 key={placementId}
                                 data-workspace-item="member"
+                                data-workspace-member-drop-target="true"
+                                data-member-user-id={member.userId}
+                                data-member-username={member.username || member.userId}
                                 onPointerDown={(event) => handlePlacedMemberPointerDown(event, placementId, position)}
                                 onContextMenu={(event) =>
                                     openProfileMenu(event, member.userId, {
@@ -5550,7 +5948,8 @@ export default function WorkspacePage() {
                                     "absolute rounded-md border bg-[var(--card-bg)] hover:bg-[var(--card-bg-hover)] active:cursor-grabbing cursor-grab px-2 py-1 text-left select-none shadow-sm",
                                     isSelected
                                         ? "border-[var(--primary)] shadow-[0_0_0_1px_var(--primary)]"
-                                        : "border-[var(--border)]"
+                                        : "border-[var(--border)]",
+                                    isShareHover && "ring-1 ring-[var(--primary)] bg-[var(--card-bg-hover)]"
                                 )}
                                 style={{ left: position.x, top: position.y, width, height: CANVAS_MEMBER_HEIGHT }}
                             >
@@ -5738,24 +6137,13 @@ export default function WorkspacePage() {
                                                 onPointerDown={(event) => event.stopPropagation()}
                                                 onClick={(event) => {
                                                     event.stopPropagation();
-                                                    if (isComment) {
-                                                        removeAnnotationFromWorkspace(annotation.id);
-                                                        return;
-                                                    }
                                                     closeAnnotationEditor();
                                                 }}
-                                                className={cn(
-                                                    "inline-flex h-6 w-6 items-center justify-center rounded-sm text-[var(--muted)]",
-                                                    isComment ? "hover:text-rose-400" : "hover:text-[var(--fg)]"
-                                                )}
-                                                aria-label={isComment ? "Remove comment" : "Close memo"}
-                                                title={isComment ? "워크스페이스에서 지우기" : "닫기"}
+                                                className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-[var(--muted)] hover:text-[var(--fg)]"
+                                                aria-label={isComment ? "Minimize comment" : "Minimize memo"}
+                                                title="줄이기"
                                             >
-                                                {isComment ? (
-                                                    <X className="h-4 w-4" />
-                                                ) : (
-                                                    <span className="block h-[2px] w-4 rounded-full bg-current" />
-                                                )}
+                                                <span className="block h-[2px] w-4 rounded-full bg-current" />
                                             </button>
                                         </div>
                                         <div className="flex-1 p-3">
@@ -5844,6 +6232,38 @@ export default function WorkspacePage() {
                     })}
                 </div>
             </section>
+
+            {fileShareDrag && (
+                <div className="pointer-events-none fixed inset-0 z-[90]">
+                    <svg className="absolute inset-0 h-full w-full">
+                        <line
+                            x1={fileShareDrag.startX}
+                            y1={fileShareDrag.startY}
+                            x2={fileShareDrag.currentX}
+                            y2={fileShareDrag.currentY}
+                            stroke="var(--primary)"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeDasharray="6 6"
+                            opacity="0.9"
+                        />
+                    </svg>
+                    <div
+                        className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-[var(--primary)]/45 bg-[var(--card-bg)] p-1 text-[var(--primary)] shadow-sm"
+                        style={{ left: fileShareDrag.currentX, top: fileShareDrag.currentY }}
+                    >
+                        <Plus className="h-4 w-4" />
+                    </div>
+                    <div
+                        className="absolute -translate-x-1/2 rounded-md border border-[var(--border)] bg-[var(--card-bg)]/96 px-2 py-1 text-[11px] text-[var(--fg)] shadow-sm"
+                        style={{ left: fileShareDrag.currentX, top: fileShareDrag.currentY + 18 }}
+                    >
+                        {fileShareDrag.hoverUserId
+                            ? `${fileShareDrag.hoverUsername}에게 보내기`
+                            : "멤버 카드에 드롭"}
+                    </div>
+                </div>
+            )}
 
             {groupDragPreview && (
                 <div
@@ -6047,15 +6467,15 @@ export default function WorkspacePage() {
                     style={{ left: `${workspaceCanvasMenu.x}px`, top: `${workspaceCanvasMenu.y}px` }}
                     onMouseDown={(event) => event.stopPropagation()}
                 >
-                    <button
-                        type="button"
-                        className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                        onClick={createWorkspaceGroupFromSelection}
-                    >
-                        {selectedCanvasItemKeys.length > 0
-                            ? `그룹 만들기 (${selectedCanvasItemKeys.length})`
-                            : "그룹 만들기"}
-                    </button>
+                    {workspaceMode === "my" && selectedCanvasItemKeys.length > 0 && (
+                        <button
+                            type="button"
+                            className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                            onClick={createWorkspaceGroupFromSelection}
+                        >
+                            그룹 만들기 ({selectedCanvasItemKeys.length})
+                        </button>
+                    )}
                     {workspaceCanvasMenu.mode !== "groupOnly" && (
                         <button
                             type="button"
@@ -6130,7 +6550,7 @@ export default function WorkspacePage() {
             {canvasFileItemMenu && (
                 <div
                     data-workspace-canvas-file-item-menu="true"
-                    className="fixed z-[74] min-w-[154px] rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
+                    className="fixed z-[74] min-w-[172px] rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
                     style={{ left: `${canvasFileItemMenu.x}px`, top: `${canvasFileItemMenu.y}px` }}
                     onMouseDown={(event) => event.stopPropagation()}
                 >
@@ -6161,6 +6581,36 @@ export default function WorkspacePage() {
                             )}
                         </div>
                     </div>
+                    {canSendFileFromCanvasMenu && (
+                        <>
+                            <div className="my-1 border-t border-[var(--border)]" />
+                            <div className="group/share relative">
+                                <div className="flex w-full items-center justify-between px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
+                                    <span>파일 보내기</span>
+                                    <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
+                                </div>
+                                <div
+                                    className={cn(
+                                        "absolute top-0 z-10 hidden min-w-[188px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md group-hover/share:block group-focus-within/share:block",
+                                        canvasFileItemMenu?.shareSubmenuLeft ? "right-full mr-1" : "left-full ml-1"
+                                    )}
+                                >
+                                    <div className="max-h-60 overflow-auto">
+                                        {fileShareTargetMembers.map((member) => (
+                                            <button
+                                                key={member.userId}
+                                                type="button"
+                                                className="w-full px-3 py-1.5 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                                onClick={() => openFileShareFromCanvasMenu(member.userId)}
+                                            >
+                                                <span className="block truncate">{member.username || member.userId}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </>
+                    )}
                     {canUngroupCanvasFileItem && (
                         <>
                             <div className="my-1 border-t border-[var(--border)]" />
@@ -6191,7 +6641,7 @@ export default function WorkspacePage() {
             {fileItemMenu && (
                 <div
                     data-workspace-file-item-menu="true"
-                    className="fixed z-[73] min-w-[172px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
+                    className="fixed z-[73] min-w-[172px] overflow-visible rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
                     style={{ left: `${fileItemMenu.x}px`, top: `${fileItemMenu.y}px` }}
                     onMouseDown={(event) => event.stopPropagation()}
                 >
@@ -6220,6 +6670,33 @@ export default function WorkspacePage() {
                             폴더 만들기
                         </button>
                     )}
+                    {canSendFileFromSidebarMenu && (
+                        <div className="group/share relative">
+                            <div className="flex w-full items-center justify-between px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
+                                <span>파일 보내기</span>
+                                <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
+                            </div>
+                            <div
+                                className={cn(
+                                    "absolute top-0 z-10 hidden min-w-[188px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md group-hover/share:block group-focus-within/share:block",
+                                    fileItemMenu?.shareSubmenuLeft ? "right-full mr-1" : "left-full ml-1"
+                                )}
+                            >
+                                <div className="max-h-60 overflow-auto">
+                                    {fileShareTargetMembers.map((member) => (
+                                        <button
+                                            key={member.userId}
+                                            type="button"
+                                            className="w-full px-3 py-1.5 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                            onClick={() => openFileShareFromSidebarMenu(member.userId)}
+                                        >
+                                            <span className="block truncate">{member.username || member.userId}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     <button
                         type="button"
                         className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
@@ -6238,13 +6715,15 @@ export default function WorkspacePage() {
                     onMouseDown={(event) => event.stopPropagation()}
                 >
                     {!groupMenu.groupId ? (
-                        <button
-                            type="button"
-                            className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                            onClick={createEmptyWorkspaceGroupFromSidebar}
-                        >
-                            그룹 만들기
-                        </button>
+                        workspaceMode === "my" ? (
+                            <button
+                                type="button"
+                                className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                onClick={createEmptyWorkspaceGroupFromSidebar}
+                            >
+                                그룹 만들기
+                            </button>
+                        ) : null
                     ) : groupMenu.source === "canvas" ? (
                         <button
                             type="button"
@@ -6295,7 +6774,7 @@ export default function WorkspacePage() {
                     className="pointer-events-none fixed z-[80] whitespace-nowrap rounded border border-[var(--border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] text-[var(--fg)] shadow-md"
                     style={{ left: groupHintTooltip.x, top: groupHintTooltip.y, transform: "translateY(-50%)" }}
                 >
-                    ctrl을 누르고 아이콘을 드래그 하세요
+                    {GROUP_HINT_TOOLTIP_TEXT}
                 </div>
             )}
 
@@ -6429,6 +6908,23 @@ export default function WorkspacePage() {
                     </div>
                 </div>
             )}
+
+            <ConfirmModal
+                open={fileShareConfirm.open}
+                title={fileShareConfirm.isResend ? "파일 재전송 확인" : "파일 전송 확인"}
+                message={
+                    fileShareConfirm.isResend
+                        ? `한번 보낸 파일입니다. ${fileShareConfirm.toUsername}님에게 다시 보내시겠습니까?`
+                        : `${fileShareConfirm.toUsername}님에게 ${fileShareConfirm.fileName} 파일을 보내시겠습니까?`
+                }
+                confirmLabel={fileShareConfirm.isResend ? "다시 보내기" : "보내기"}
+                cancelLabel="취소"
+                isProcessing={fileShareConfirm.isSubmitting}
+                onCancel={closeFileShareConfirm}
+                onConfirm={() => {
+                    void submitFileShareConfirm();
+                }}
+            />
 
             <ConfirmModal
                 open={roleChangeConfirm.open}

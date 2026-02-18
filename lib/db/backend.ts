@@ -1,14 +1,13 @@
-export type DataBackend = "notion" | "supabase";
+export type DataBackend = "supabase";
 
 export function getDataBackend(): DataBackend {
-    const raw = String(process.env.DATA_BACKEND || "notion").trim().toLowerCase();
-    return raw === "supabase" ? "supabase" : "notion";
+    return "supabase";
 }
 
 export function isSupabaseBackend() {
-    return getDataBackend() === "supabase";
+    return true;
 }
 
 export function isNotionBackend() {
-    return getDataBackend() === "notion";
+    return false;
 }

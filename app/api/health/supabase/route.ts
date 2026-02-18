@@ -4,7 +4,7 @@ import { isSupabaseConfigured, supabaseRest } from "@/lib/supabase-rest";
 export const runtime = "nodejs";
 
 export async function GET() {
-    const backend = String(process.env.DATA_BACKEND || "notion");
+    const backend = "supabase";
 
     if (!isSupabaseConfigured()) {
         return NextResponse.json(

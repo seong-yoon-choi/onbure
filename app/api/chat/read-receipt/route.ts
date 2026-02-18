@@ -3,6 +3,16 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getDmReadReceiptForUser, markDmThreadSeenByUser } from "@/lib/db/chat-widget";
 
+function invalidateChatAlertsCache(userIds: Array<string | undefined | null>) {
+    const cache = (globalThis as { __onbureChatAlertsCache?: Map<string, unknown> }).__onbureChatAlertsCache;
+    if (!cache) return;
+    for (const userId of userIds) {
+        const normalized = String(userId || "").trim();
+        if (!normalized) continue;
+        cache.delete(normalized);
+    }
+}
+
 export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session) {
@@ -20,6 +30,7 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
         const receipt = await getDmReadReceiptForUser(threadId, currentUserId);
+        invalidateChatAlertsCache([currentUserId]);
         return NextResponse.json(receipt);
     } catch (error: any) {
         if (error?.message === "Forbidden") {
@@ -48,6 +59,7 @@ export async function POST(req: NextRequest) {
         }
         const seenAtEpoch = Number.isFinite(Number(seenAt)) ? Number(seenAt) : Date.now();
         const receipt = await markDmThreadSeenByUser(threadId, currentUserId, seenAtEpoch);
+        invalidateChatAlertsCache([currentUserId]);
         return NextResponse.json(receipt);
     } catch (error: any) {
         if (error?.message === "Forbidden") {

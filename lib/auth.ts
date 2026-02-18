@@ -81,5 +81,5 @@ export const authOptions: NextAuthOptions = {
         signIn: "/login",
         error: "/login", // Redirect to login on error
     },
-    debug: true, // Enable debug logs for server config issues
+    debug: process.env.NODE_ENV !== "production",
 };

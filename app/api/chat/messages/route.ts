@@ -24,6 +24,16 @@ function parseTeamId(threadId: string) {
     return normalized.split("::").slice(1).join("::").trim();
 }
 
+function invalidateChatAlertsCache(userIds: Array<string | undefined | null>) {
+    const cache = (globalThis as { __onbureChatAlertsCache?: Map<string, unknown> }).__onbureChatAlertsCache;
+    if (!cache) return;
+    for (const userId of userIds) {
+        const normalized = String(userId || "").trim();
+        if (!normalized) continue;
+        cache.delete(normalized);
+    }
+}
+
 export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session) {
@@ -41,6 +51,7 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
         const messages = await listMessagesForThread(threadId, currentUserId);
+        invalidateChatAlertsCache([currentUserId]);
         return NextResponse.json(messages);
     } catch (error: any) {
         if (error?.message === "Forbidden") {
@@ -105,6 +116,7 @@ export async function POST(req: NextRequest) {
                     })
                 )
             );
+            invalidateChatAlertsCache([senderUserId, ...dmTargets]);
         } else {
             await appendAuditLog({
                 category: "chat",
@@ -112,6 +124,9 @@ export async function POST(req: NextRequest) {
                 actorUserId: senderUserId,
                 metadata: { threadId },
             });
+        }
+        if (!dmTargets.length) {
+            invalidateChatAlertsCache([senderUserId]);
         }
         return NextResponse.json(message);
     } catch (error: any) {

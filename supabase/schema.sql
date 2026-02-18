@@ -7,6 +7,7 @@ create extension if not exists pgcrypto;
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
+set search_path = pg_catalog, public
 as $$
 begin
   new.updated_at = now();
@@ -201,6 +202,8 @@ create table if not exists public.workspace_files (
   file_id text primary key,
   team_id text not null references public.teams(team_id) on delete cascade,
   folder_id text references public.workspace_files(file_id) on delete set null,
+  scope text not null default 'team',
+  owner_user_id text references public.profiles(user_id) on delete set null,
   title text not null,
   url text,
   created_at timestamptz not null default now()
@@ -208,9 +211,36 @@ create table if not exists public.workspace_files (
 
 alter table if exists public.workspace_files
   add column if not exists folder_id text;
+alter table if exists public.workspace_files
+  add column if not exists scope text;
+alter table if exists public.workspace_files
+  add column if not exists owner_user_id text references public.profiles(user_id) on delete set null;
+
+update public.workspace_files
+set scope = 'team'
+where scope is null;
+
+alter table if exists public.workspace_files
+  alter column scope set default 'team';
+alter table if exists public.workspace_files
+  alter column scope set not null;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'workspace_files_scope_check'
+  ) then
+    alter table public.workspace_files
+      add constraint workspace_files_scope_check
+      check (scope in ('team', 'user'));
+  end if;
+end $$;
 
 create index if not exists idx_workspace_files_team on public.workspace_files (team_id);
 create index if not exists idx_workspace_files_folder on public.workspace_files (folder_id);
+create index if not exists idx_workspace_files_scope_owner on public.workspace_files (team_id, scope, owner_user_id);
 
 create table if not exists public.workspace_tasks (
   task_id text primary key,

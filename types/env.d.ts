@@ -3,7 +3,7 @@ declare namespace NodeJS {
         // App
         NEXT_PUBLIC_APP_NAME: string;
         NEXT_PUBLIC_APP_URL: string;
-        DATA_BACKEND?: "notion" | "supabase";
+        DATA_BACKEND?: "supabase";
 
         // Auth
         NEXTAUTH_URL: string;
@@ -22,27 +22,6 @@ declare namespace NodeJS {
         GITHUB_SECRET?: string;
         GITHUB_CLIENT_ID?: string;
         GITHUB_CLIENT_SECRET?: string;
-
-        // Notion Core
-        NOTION_TOKEN?: string;
-        NOTION_PARENT_PAGE_ID?: string;
-
-        // Notion DBs
-        NOTION_DB_USERS?: string;
-        NOTION_DB_TEAMS?: string;
-        NOTION_DB_TEAM_MEMBERS?: string;
-        NOTION_DB_CHAT_REQUESTS?: string;
-        NOTION_DB_TEAM_INVITES?: string;
-        NOTION_DB_JOIN_REQUESTS?: string;
-        NOTION_DB_TEAM_JOIN_REQUESTS?: string;
-        NOTION_DB_THREADS?: string;
-        NOTION_DB_MESSAGES?: string;
-        NOTION_DB_LINKS?: string;
-        NOTION_DB_FILES?: string;
-        NOTION_DB_COMMENTS?: string;
-        NOTION_DB_TASKS?: string;
-        NOTION_DB_MEETING_NOTES?: string;
-        NOTION_DB_AGREEMENT_NOTES?: string;
 
         // Email
         SMTP_HOST?: string;

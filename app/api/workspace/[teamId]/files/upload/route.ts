@@ -12,6 +12,10 @@ export const runtime = "nodejs";
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
+function resolveWorkspaceFileScope(value: FormDataEntryValue | null): "team" | "user" {
+    return String(value || "").trim().toLowerCase() === "my" ? "user" : "team";
+}
+
 function invalidateWorkspaceTeamCache(teamId: string) {
     const cache = (globalThis as any).__onbureWorkspaceCache as Map<string, unknown> | undefined;
     if (!cache) return;
@@ -55,6 +59,7 @@ export async function POST(
 
         const form = await req.formData();
         const payload = form.get("file");
+        const fileScope = resolveWorkspaceFileScope(form.get("scope"));
         if (!(payload instanceof File)) {
             return NextResponse.json({ error: "file is required." }, { status: 400 });
         }
@@ -81,14 +86,17 @@ export async function POST(
             contentType: payload.type || "application/octet-stream",
         });
 
-        await createFile(teamId, safeName, pointer);
+        await createFile(teamId, safeName, pointer, {
+            scope: fileScope,
+            ownerUserId: fileScope === "user" ? currentUserId : undefined,
+        });
         invalidateWorkspaceTeamCache(teamId);
         await appendAuditLog({
             category: "workspace",
             event: "workspace_file_uploaded",
             actorUserId: currentUserId,
             teamId,
-            scope: "team",
+            scope: fileScope,
             metadata: {
                 fileName: safeName,
                 size: payload.size,
@@ -98,8 +106,21 @@ export async function POST(
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error("POST /api/workspace/[teamId]/files/upload failed", error);
+        const message = error instanceof Error ? error.message : String(error || "");
+        const missingScopedFileColumns =
+            message.includes("PGRST204") &&
+            message.includes("workspace_files") &&
+            (message.includes("scope") || message.includes("owner_user_id"));
+        if (missingScopedFileColumns) {
+            return NextResponse.json(
+                {
+                    error: "workspace_files.scope / owner_user_id is missing. Run the Supabase migration and reload schema cache.",
+                },
+                { status: 400 }
+            );
+        }
         return NextResponse.json(
-            { error: error instanceof Error ? error.message : "Internal Server Error" },
+            { error: message || "Internal Server Error" },
             { status: 500 }
         );
     }

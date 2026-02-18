@@ -1,6 +1,6 @@
 import { getTitlePropertyName } from "./notion-schema";
 
-// Helper to build Notion API payload properties dynamically based on Schema
+// Helper to build payload properties dynamically based on schema.
 export function buildProps(schema: any, data: Record<string, any>) {
     const propsPayload: Record<string, any> = {};
     const schemaProps = schema.properties;
@@ -22,8 +22,7 @@ export function buildProps(schema: any, data: Record<string, any>) {
         // If the key exists in schema, use its type.
         const propDef = schemaProps[key];
         if (!propDef) {
-            // Warning: Property in data is not in Notion Schema. Ignoring or Log?
-            // console.warn(`Property '${key}' not found in Notion DB Schema. Skipping.`);
+            // Property does not exist in schema; skip silently.
             continue;
         }
 
@@ -81,9 +80,8 @@ export function buildProps(schema: any, data: Record<string, any>) {
                     status: { name: String(value) }
                 };
                 break;
-            // Add more types as needed (people, files, relation...) - For MVP simpler ones suffice
             case "people":
-                // value shoud be user id string
+                // value should be user id string
                 propsPayload[key] = {
                     people: [{ id: value }]
                 };

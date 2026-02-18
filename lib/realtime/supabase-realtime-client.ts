@@ -68,7 +68,11 @@ async function getRealtimeConfig(): Promise<RealtimeConfig | null> {
         }
     })();
 
-    return cachedConfigPromise;
+    const resolved = await cachedConfigPromise;
+    if (!resolved) {
+        cachedConfigPromise = null;
+    }
+    return resolved;
 }
 
 function parseRealtimePayload(payload: Record<string, unknown> | undefined): RealtimeChangePayload | null {
@@ -250,4 +254,3 @@ export function subscribeToAuditLogRealtime(
         }
     );
 }
-

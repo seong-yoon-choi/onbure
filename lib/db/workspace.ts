@@ -13,6 +13,26 @@ const DB_FILES = getDatabaseId("NOTION_DB_FILES");
 const DB_TASKS = getDatabaseId("NOTION_DB_TASKS");
 const DB_AGREEMENT_NOTES = getDatabaseId("NOTION_DB_AGREEMENT_NOTES");
 
+type WorkspaceFileScope = "team" | "user";
+
+interface WorkspaceFileOptions {
+    scope?: WorkspaceFileScope;
+    ownerUserId?: string;
+}
+
+function normalizeWorkspaceFileScope(value: string | null | undefined): WorkspaceFileScope {
+    return String(value || "").trim().toLowerCase() === "user" ? "user" : "team";
+}
+
+function resolveWorkspaceFileOptions(options?: WorkspaceFileOptions) {
+    const scope = options?.scope === "user" ? "user" : "team";
+    const ownerUserId = String(options?.ownerUserId || "").trim();
+    return {
+        scope,
+        ownerUserId: scope === "user" ? ownerUserId : "",
+    };
+}
+
 export async function getLinks(teamId: string) {
     if (isSupabaseBackend()) {
         const rows = (await supabaseRest(
@@ -66,7 +86,9 @@ export async function createLink(teamId: string, title: string, url: string) {
     });
 }
 
-export async function getFiles(teamId: string) {
+export async function getFiles(teamId: string, options?: WorkspaceFileOptions) {
+    const { scope, ownerUserId } = resolveWorkspaceFileOptions(options);
+
     if (isSupabaseBackend()) {
         const rows = (await supabaseRest(
             `/workspace_files?select=*&team_id=eq.${encodeURIComponent(teamId)}&order=created_at.asc`
@@ -75,11 +97,22 @@ export async function getFiles(teamId: string) {
             title: string;
             url: string | null;
             folder_id?: string | null;
+            scope?: string | null;
+            owner_user_id?: string | null;
             created_at: string;
         }>;
 
+        const filteredRows = rows.filter((row) => {
+            const rowScope = normalizeWorkspaceFileScope(row.scope);
+            if (scope === "user") {
+                if (!ownerUserId) return false;
+                return rowScope === "user" && String(row.owner_user_id || "").trim() === ownerUserId;
+            }
+            return rowScope === "team";
+        });
+
         return Promise.all(
-            rows.map(async (row) => {
+            filteredRows.map(async (row) => {
                 const rawUrl = row.url || "";
                 let resolvedUrl = rawUrl;
                 if (parseSupabaseStoragePointer(rawUrl)) {
@@ -117,8 +150,13 @@ export async function getFiles(teamId: string) {
     }));
 }
 
-export async function createFile(teamId: string, title: string, _url: string) {
+export async function createFile(teamId: string, title: string, _url: string, options?: WorkspaceFileOptions) {
     const fileId = uuidv4();
+    const { scope, ownerUserId } = resolveWorkspaceFileOptions(options);
+
+    if (scope === "user" && !ownerUserId) {
+        throw new Error("ownerUserId is required for user-scoped workspace files.");
+    }
 
     if (isSupabaseBackend()) {
         await supabaseRest("/workspace_files", {
@@ -129,6 +167,8 @@ export async function createFile(teamId: string, title: string, _url: string) {
                 team_id: teamId,
                 title,
                 url: _url || null,
+                scope,
+                owner_user_id: scope === "user" ? ownerUserId : null,
             },
         });
         return fileId;
@@ -145,14 +185,21 @@ export async function createFile(teamId: string, title: string, _url: string) {
     return fileId;
 }
 
-export async function renameFile(teamId: string, fileId: string, title: string) {
+export async function renameFile(teamId: string, fileId: string, title: string, options?: WorkspaceFileOptions) {
     if (!teamId || !fileId) return;
     const normalizedTitle = String(title || "").trim().replace(/\s+/g, " ").slice(0, 120);
     if (!normalizedTitle) return;
+    const { scope, ownerUserId } = resolveWorkspaceFileOptions(options);
+
+    if (scope === "user" && !ownerUserId) return;
 
     if (isSupabaseBackend()) {
+        const ownerFilter =
+            scope === "user"
+                ? `&scope=eq.user&owner_user_id=eq.${encodeURIComponent(ownerUserId)}`
+                : "";
         await supabaseRest(
-            `/workspace_files?team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}`,
+            `/workspace_files?team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}${ownerFilter}`,
             {
                 method: "PATCH",
                 prefer: "return=minimal",
@@ -190,12 +237,19 @@ export async function renameFile(teamId: string, fileId: string, title: string) 
     });
 }
 
-export async function deleteFile(teamId: string, fileId: string) {
+export async function deleteFile(teamId: string, fileId: string, options?: WorkspaceFileOptions) {
     if (!teamId || !fileId) return;
+    const { scope, ownerUserId } = resolveWorkspaceFileOptions(options);
+
+    if (scope === "user" && !ownerUserId) return;
 
     if (isSupabaseBackend()) {
+        const ownerFilter =
+            scope === "user"
+                ? `&scope=eq.user&owner_user_id=eq.${encodeURIComponent(ownerUserId)}`
+                : "";
         const targetRows = (await supabaseRest(
-            `/workspace_files?select=url&team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}&limit=1`
+            `/workspace_files?select=url&team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}${ownerFilter}&limit=1`
         )) as Array<{ url: string | null }>;
         const targetUrl = String(targetRows[0]?.url || "").trim();
         if (parseSupabaseStoragePointer(targetUrl)) {
@@ -207,7 +261,7 @@ export async function deleteFile(teamId: string, fileId: string) {
         }
 
         await supabaseRest(
-            `/workspace_files?team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}`,
+            `/workspace_files?team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}${ownerFilter}`,
             {
                 method: "DELETE",
                 prefer: "return=minimal",
@@ -246,13 +300,25 @@ export async function deleteFile(teamId: string, fileId: string) {
     });
 }
 
-export async function moveFileToFolder(teamId: string, fileId: string, folderId?: string | null) {
+export async function moveFileToFolder(
+    teamId: string,
+    fileId: string,
+    folderId?: string | null,
+    options?: WorkspaceFileOptions
+) {
     if (!teamId || !fileId) return;
     const normalizedFolderId = String(folderId || "").trim() || null;
+    const { scope, ownerUserId } = resolveWorkspaceFileOptions(options);
+
+    if (scope === "user" && !ownerUserId) return;
 
     if (isSupabaseBackend()) {
+        const ownerFilter =
+            scope === "user"
+                ? `&scope=eq.user&owner_user_id=eq.${encodeURIComponent(ownerUserId)}`
+                : "";
         await supabaseRest(
-            `/workspace_files?team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}`,
+            `/workspace_files?team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}${ownerFilter}`,
             {
                 method: "PATCH",
                 prefer: "return=minimal",
