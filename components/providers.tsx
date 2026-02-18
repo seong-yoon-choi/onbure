@@ -134,7 +134,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     const value = useMemo(() => ({ theme, setTheme }), [theme, setTheme]);
 
     return (
-        <SessionProvider>
+        <SessionProvider refetchOnWindowFocus={false} refetchInterval={0}>
             <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
         </SessionProvider>
     );

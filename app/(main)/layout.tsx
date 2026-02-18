@@ -91,7 +91,22 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     const [hasChatAlert, setHasChatAlert] = useState(false);
     const teamMenuRef = useRef<HTMLDivElement | null>(null);
     const chatAlertFetchSeqRef = useRef(0);
+    const requestsAlertInFlightRef = useRef(false);
+    const chatAlertInFlightRef = useRef(false);
     const isWorkspacePage = pathname.startsWith("/workspace");
+
+    const fetchWithTimeout = useCallback(async (url: string, timeoutMs = 7000) => {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            return await fetch(url, {
+                signal: controller.signal,
+                cache: "no-store",
+            });
+        } finally {
+            window.clearTimeout(timer);
+        }
+    }, []);
 
     useEffect(() => {
         const handlePointerDown = (event: MouseEvent) => {
@@ -133,9 +148,11 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         if (typeof document !== "undefined" && document.visibilityState !== "visible") {
             return;
         }
+        if (requestsAlertInFlightRef.current) return;
+        requestsAlertInFlightRef.current = true;
 
         try {
-            const res = await fetch("/api/requests");
+            const res = await fetchWithTimeout("/api/requests");
             if (!res.ok) {
                 setHasRequestsAlert(false);
                 return;
@@ -144,8 +161,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             setHasRequestsAlert(Array.isArray(payload.requests) && payload.requests.length > 0);
         } catch {
             setHasRequestsAlert(false);
+        } finally {
+            requestsAlertInFlightRef.current = false;
         }
-    }, [sessionStatus]);
+    }, [sessionStatus, fetchWithTimeout]);
 
     const fetchChatAlert = useCallback(async () => {
         const fetchSeq = ++chatAlertFetchSeqRef.current;
@@ -159,16 +178,20 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             setChatAlertSafely(false);
             return;
         }
+        if (chatAlertInFlightRef.current) return;
+        chatAlertInFlightRef.current = true;
         if (isChatOpen) {
             setChatAlertSafely(false);
+            chatAlertInFlightRef.current = false;
             return;
         }
         if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+            chatAlertInFlightRef.current = false;
             return;
         }
 
         try {
-            const threadsRes = await fetch("/api/chat/alerts");
+            const threadsRes = await fetchWithTimeout("/api/chat/alerts");
             if (!threadsRes.ok) {
                 setChatAlertSafely(false);
                 return;
@@ -209,8 +232,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             setChatAlertSafely(false);
         } catch {
             setChatAlertSafely(false);
+        } finally {
+            chatAlertInFlightRef.current = false;
         }
-    }, [sessionStatus, currentUserId, isChatOpen]);
+    }, [sessionStatus, currentUserId, isChatOpen, fetchWithTimeout]);
 
     const refreshTopbarAlerts = useCallback(() => {
         if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
