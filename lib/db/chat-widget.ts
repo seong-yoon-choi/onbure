@@ -987,22 +987,27 @@ export async function markDmThreadSeenByUser(
 
 export async function listMessagesForThread(
     threadId: string,
-    currentUserId: string
+    currentUserId: string,
+    options?: {
+        includeSenderUsernames?: boolean;
+    }
 ): Promise<ChatMessageSummary[]> {
     const normalizedThreadId = String(threadId || "").trim();
     const normalizedUserId = String(currentUserId || "").trim();
+    const includeSenderUsernames = options?.includeSenderUsernames !== false;
     if (!normalizedThreadId || !normalizedUserId) return [];
     await assertThreadAccessForUser(normalizedThreadId, normalizedUserId);
 
     if (isSupabaseBackend()) {
-        const [rows, users] = await Promise.all([
-            supabaseRest(
-                `/messages?select=*&thread_id=eq.${encodeURIComponent(normalizedThreadId)}&order=created_at.asc`
-            ) as Promise<SupabaseMessageRow[]>,
-            listUsers(),
-        ]);
+        const rows = (await supabaseRest(
+            `/messages?select=*&thread_id=eq.${encodeURIComponent(normalizedThreadId)}&order=created_at.asc`
+        )) as SupabaseMessageRow[];
 
-        const usernameByUserId = new Map(users.map((user) => [user.userId, user.username || ""]));
+        let usernameByUserId = new Map<string, string>();
+        if (includeSenderUsernames) {
+            const users = await listUsers();
+            usernameByUserId = new Map(users.map((user) => [user.userId, user.username || ""]));
+        }
         return rows.map((row) => mapSupabaseMessageRow(row, usernameByUserId));
     }
 

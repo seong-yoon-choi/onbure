@@ -677,14 +677,12 @@ export default function ChatWidget({
       if (usersRes.ok) {
         const usersData = (await usersRes.json()) as DmUserItem[];
         setDmUsers(usersData);
-        void fetchDmLastMessagePreview(usersData);
         hasAnySuccess = true;
       }
 
       if (teamsRes.ok) {
         const teamsData = (await teamsRes.json()) as TeamItem[];
         setTeams(teamsData);
-        void fetchTeamLastMessagePreview(teamsData);
         hasAnySuccess = true;
       }
 
@@ -701,7 +699,28 @@ export default function ChatWidget({
     } finally {
       setDirectoryLoading(false);
     }
-  }, [fetchDmLastMessagePreview, fetchTeamLastMessagePreview]);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (activeTab === "dm") {
+      if (!dmUsers.length) {
+        setDmLastMessageByUserId({});
+        setDmUnreadCountByUserId({});
+        return;
+      }
+      void fetchDmLastMessagePreview(dmUsers);
+      return;
+    }
+
+    if (!teams.length) {
+      setTeamLastMessageByTeamId({});
+      setTeamUnreadCountByTeamId({});
+      return;
+    }
+    void fetchTeamLastMessagePreview(teams);
+  }, [isOpen, activeTab, dmUsers, teams, fetchDmLastMessagePreview, fetchTeamLastMessagePreview]);
 
   const refreshActiveThread = useCallback(async () => {
     if (!activeThread) return;

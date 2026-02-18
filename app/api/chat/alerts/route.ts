@@ -66,7 +66,9 @@ export async function GET() {
         const threads = await listThreadsForUser(currentUserId);
         const threadItems = await Promise.all(
             threads.map(async (thread) => {
-                const messages = await listMessagesForThread(thread.threadId, currentUserId);
+                const messages = await listMessagesForThread(thread.threadId, currentUserId, {
+                    includeSenderUsernames: false,
+                });
                 const lastMessage = messages[messages.length - 1];
                 const seenAt = Number(thread.dmSeenMap?.[currentUserId] || 0);
 
