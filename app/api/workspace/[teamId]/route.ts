@@ -55,6 +55,34 @@ const workspacePresence =
     globalThis.__onbureWorkspacePresence ||
     (globalThis.__onbureWorkspacePresence = new Map<string, number>());
 
+function unauthorizedResponse() {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+
+function hasSessionCookie(req: Request): boolean {
+    const cookieHeader = String(req.headers.get("cookie") || "");
+    if (!cookieHeader) return false;
+
+    return (
+        cookieHeader.includes("next-auth.session-token=") ||
+        cookieHeader.includes("__Secure-next-auth.session-token=") ||
+        cookieHeader.includes("authjs.session-token=") ||
+        cookieHeader.includes("__Secure-authjs.session-token=")
+    );
+}
+
+async function resolveAuthenticatedUserId() {
+    try {
+        const session = await getServerSession(authOptions);
+        const userId = String((session?.user as { id?: string } | undefined)?.id || "").trim();
+        if (!session || !userId) return null;
+        return userId;
+    } catch (error) {
+        console.error("Failed to resolve session in /api/workspace/[teamId]", error);
+        return null;
+    }
+}
+
 function isNotionRateLimitedError(error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     return message.includes("Notion API Error [429]") || message.includes("\"code\":\"rate_limited\"");
@@ -148,14 +176,10 @@ async function assertActiveTeamMember(teamId: string, userId: string) {
     }
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ teamId: string }> }) {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const userId = String((session.user as { id?: string } | undefined)?.id || "");
-    if (!userId.trim()) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+export async function GET(req: Request, { params }: { params: Promise<{ teamId: string }> }) {
+    if (!hasSessionCookie(req)) return unauthorizedResponse();
+    const userId = await resolveAuthenticatedUserId();
+    if (!userId) return unauthorizedResponse();
     const { teamId } = await params;
     const now = Date.now();
     markWorkspacePresence(teamId, userId, now);
@@ -242,15 +266,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ teamId:
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ teamId: string }> }) {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!hasSessionCookie(req)) return unauthorizedResponse();
+    const currentUserId = await resolveAuthenticatedUserId();
+    if (!currentUserId) return unauthorizedResponse();
     const { teamId } = await params;
-    const currentUserId = String((session.user as { id?: string } | undefined)?.id || "").trim();
 
     try {
-        if (!currentUserId) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
         await syncAcceptedTeamMembershipsForUser(currentUserId, teamId).catch(() => undefined);
         await assertActiveTeamMember(teamId, currentUserId);
 
@@ -313,15 +334,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ teamId:
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ teamId: string }> }) {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!hasSessionCookie(req)) return unauthorizedResponse();
+    const currentUserId = await resolveAuthenticatedUserId();
+    if (!currentUserId) return unauthorizedResponse();
 
     try {
-        const currentUserId = String((session.user as { id?: string } | undefined)?.id || "").trim();
         const { teamId } = await params;
-        if (!currentUserId) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
 
         await syncAcceptedTeamMembershipsForUser(currentUserId, teamId).catch(() => undefined);
         await assertActiveTeamMember(teamId, currentUserId);
@@ -438,15 +456,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ teamId
 }
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ teamId: string }> }) {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!hasSessionCookie(req)) return unauthorizedResponse();
+    const currentUserId = await resolveAuthenticatedUserId();
+    if (!currentUserId) return unauthorizedResponse();
 
     try {
-        const currentUserId = String((session.user as { id?: string } | undefined)?.id || "").trim();
         const { teamId } = await params;
-        if (!currentUserId) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
 
         await syncAcceptedTeamMembershipsForUser(currentUserId, teamId).catch(() => undefined);
         await assertActiveTeamMember(teamId, currentUserId);
