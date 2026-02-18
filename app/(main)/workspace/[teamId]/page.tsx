@@ -3604,13 +3604,15 @@ export default function WorkspacePage() {
     ) => {
         const canCreateGroup = workspaceMode === "my" && selectedCanvasItemKeys.length > 0;
         const canCreateAnnotation = mode !== "groupOnly";
+        const canMoveToGroup = selectedCanvasItemKeys.length > 0;
         const canRemoveFromWorkspace = selectedCanvasItemKeys.length > 0;
-        if (!canCreateGroup && !canCreateAnnotation && !canRemoveFromWorkspace) return;
+        if (!canCreateGroup && !canCreateAnnotation && !canMoveToGroup && !canRemoveFromWorkspace) return;
 
         const menuWidth = 186;
         const menuRowHeight = 40;
         const menuHeight =
             (canCreateGroup ? menuRowHeight : 0) +
+            (canMoveToGroup ? menuRowHeight : 0) +
             (canCreateAnnotation ? menuRowHeight : 0) +
             (canRemoveFromWorkspace ? menuRowHeight : 0);
         const gap = 8;
@@ -3634,6 +3636,21 @@ export default function WorkspacePage() {
         createWorkspaceGroup(selectedKeys);
         setSelectedCanvasItemKeys([]);
         setWorkspaceCanvasMenu(null);
+    };
+
+    const moveSelectedCanvasItemsToGroupFromMenu = (groupId: string) => {
+        if (!workspaceCanvasMenu) return;
+        const selectedKeys = Array.from(
+            new Set(selectedCanvasItemKeys.filter((itemKey) => selectableCanvasItemMap.has(itemKey)))
+        );
+        if (selectedKeys.length === 0) {
+            setWorkspaceCanvasMenu(null);
+            return;
+        }
+
+        const origin = { x: workspaceCanvasMenu.x + 84, y: workspaceCanvasMenu.y + 16 };
+        setWorkspaceCanvasMenu(null);
+        moveCanvasItemKeysToGroupFromMenu(selectedKeys, groupId, origin);
     };
 
     const removeSelectedCanvasItemsFromWorkspace = () => {
@@ -6597,6 +6614,35 @@ export default function WorkspacePage() {
                         >
                             그룹 만들기 ({selectedCanvasItemKeys.length})
                         </button>
+                    )}
+                    {selectedCanvasItemKeys.length > 0 && (
+                        <div className="group/move relative">
+                            <div className="flex w-full items-center justify-between whitespace-nowrap px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
+                                <span>그룹으로 이동</span>
+                                <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
+                            </div>
+                            <div className="absolute left-full top-0 z-10 ml-1 hidden min-w-[188px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md group-hover/move:block group-focus-within/move:block">
+                                {workspaceGroups.length === 0 ? (
+                                    <p className="px-3 py-2 text-xs text-[var(--muted)]">그룹이 없습니다.</p>
+                                ) : (
+                                    <div className="max-h-60 overflow-auto">
+                                        {workspaceGroups.map((group) => (
+                                            <button
+                                                key={group.id}
+                                                type="button"
+                                                className="w-full px-3 py-1.5 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                                onClick={() => moveSelectedCanvasItemsToGroupFromMenu(group.id)}
+                                            >
+                                                <span className="flex items-center gap-2 min-w-0">
+                                                    <Boxes className="h-3.5 w-3.5 shrink-0 text-[var(--primary)]" />
+                                                    <span className="min-w-0 truncate">{group.name}</span>
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     )}
                     {selectedCanvasItemKeys.length > 0 && (
                         <button
