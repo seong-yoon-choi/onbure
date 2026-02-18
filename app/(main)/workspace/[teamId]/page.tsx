@@ -3557,8 +3557,6 @@ export default function WorkspacePage() {
     };
 
     const createWorkspaceGroup = (itemKeys: string[] = []) => {
-        if (workspaceMode !== "my") return null;
-
         const normalizedKeys = Array.from(
             new Set(itemKeys.filter((itemKey) => selectableCanvasItemMap.has(itemKey)))
         );
@@ -3602,12 +3600,16 @@ export default function WorkspacePage() {
         canvasY: number,
         mode: "default" | "groupOnly" = "default"
     ) => {
-        const canCreateGroup = workspaceMode === "my" && selectedCanvasItemKeys.length > 0;
+        const canCreateGroup = selectedCanvasItemKeys.length > 0;
         const canCreateAnnotation = mode !== "groupOnly";
-        if (!canCreateGroup && !canCreateAnnotation) return;
+        const canRemoveFromWorkspace = selectedCanvasItemKeys.length > 0;
+        if (!canCreateGroup && !canCreateAnnotation && !canRemoveFromWorkspace) return;
 
         const menuWidth = 184;
-        const menuHeight = (canCreateGroup ? 44 : 0) + (canCreateAnnotation ? 44 : 0);
+        const menuHeight =
+            (canCreateGroup ? 44 : 0) +
+            (canCreateAnnotation ? 44 : 0) +
+            (canRemoveFromWorkspace ? 44 : 0);
         const gap = 8;
         const x = Math.min(Math.max(clientX, gap), window.innerWidth - menuWidth - gap);
         const y = Math.min(Math.max(clientY, gap), window.innerHeight - menuHeight - gap);
@@ -3627,6 +3629,43 @@ export default function WorkspacePage() {
             new Set(selectedCanvasItemKeys.filter((itemKey) => selectableCanvasItemMap.has(itemKey)))
         );
         createWorkspaceGroup(selectedKeys);
+        setSelectedCanvasItemKeys([]);
+        setWorkspaceCanvasMenu(null);
+    };
+
+    const removeSelectedCanvasItemsFromWorkspace = () => {
+        const selectedKeys = Array.from(
+            new Set(selectedCanvasItemKeys.filter((itemKey) => selectableCanvasItemMap.has(itemKey)))
+        );
+        if (selectedKeys.length === 0) {
+            setWorkspaceCanvasMenu(null);
+            return;
+        }
+
+        const filePlacementIds = new Set<string>();
+        const memberPlacementIds = new Set<string>();
+        const annotationIds = new Set<string>();
+
+        for (const itemKey of selectedKeys) {
+            const parsed = parseCanvasItemKey(itemKey);
+            if (!parsed) continue;
+            if (parsed.kind === "file") {
+                filePlacementIds.add(parsed.id);
+                continue;
+            }
+            if (parsed.kind === "member") {
+                memberPlacementIds.add(parsed.id);
+                continue;
+            }
+            if (parsed.kind === "annotation") {
+                annotationIds.add(parsed.id);
+            }
+        }
+
+        filePlacementIds.forEach((placementId) => handleRemovePlacedFile(placementId));
+        memberPlacementIds.forEach((placementId) => handleRemovePlacedMember(placementId));
+        annotationIds.forEach((annotationId) => removeAnnotationFromWorkspace(annotationId));
+
         setSelectedCanvasItemKeys([]);
         setWorkspaceCanvasMenu(null);
     };
@@ -6547,13 +6586,22 @@ export default function WorkspacePage() {
                     style={{ left: `${workspaceCanvasMenu.x}px`, top: `${workspaceCanvasMenu.y}px` }}
                     onMouseDown={(event) => event.stopPropagation()}
                 >
-                    {workspaceMode === "my" && selectedCanvasItemKeys.length > 0 && (
+                    {selectedCanvasItemKeys.length > 0 && (
                         <button
                             type="button"
                             className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                             onClick={createWorkspaceGroupFromSelection}
                         >
                             그룹 만들기 ({selectedCanvasItemKeys.length})
+                        </button>
+                    )}
+                    {selectedCanvasItemKeys.length > 0 && (
+                        <button
+                            type="button"
+                            className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
+                            onClick={removeSelectedCanvasItemsFromWorkspace}
+                        >
+                            워크스페이스에서 지우기 ({selectedCanvasItemKeys.length})
                         </button>
                     )}
                     {workspaceCanvasMenu.mode !== "groupOnly" && (
