@@ -1,6 +1,6 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { AlertModal } from "@/components/ui/modal";
@@ -82,24 +82,39 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
         return data;
     };
 
-    async function fetchData() {
+    const fetchData = useCallback(async () => {
         try {
             const res = await fetch("/api/discovery");
-            if (res.ok) {
-                const data = await res.json();
-                setTeams(data.teams);
-                setPeople(data.people);
+            if (res.status === 401) {
+                router.push("/login");
+                return;
+            }
+            if (!res.ok) {
+                throw new Error("Failed to load discovery data.");
+            }
+
+            const data = (await res.json()) as {
+                teams?: any[];
+                people?: any[];
+                partialError?: boolean;
+            };
+            setTeams(Array.isArray(data.teams) ? data.teams : []);
+            setPeople(Array.isArray(data.people) ? data.people : []);
+
+            if (data.partialError) {
+                openNotice("일부 데이터 로드 실패", "일부 데이터만 먼저 표시됩니다. 잠시 후 다시 시도해 주세요.");
             }
         } catch (error) {
             console.error("Failed to fetch discovery data", error);
+            openNotice("로드 실패", "Discovery 데이터를 불러오지 못했습니다.");
         } finally {
             setLoading(false);
         }
-    }
+    }, [router]);
 
     useEffect(() => {
-        fetchData();
-    }, []);
+        void fetchData();
+    }, [fetchData]);
 
     useEffect(() => {
         if (!profileMenu) return;

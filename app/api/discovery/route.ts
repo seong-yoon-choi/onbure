@@ -8,44 +8,74 @@ import { getActiveChatPartnerStates, getJoinRequestsForApplicantByStatuses } fro
 export async function GET() {
     const session = await getServerSession(authOptions);
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const userId = (session.user as any).id;
+    const userId = String((session.user as { id?: string } | undefined)?.id || "").trim();
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    try {
-        const [teams, users, activeChatStates, memberships, myJoinRequests] = await Promise.all([
+    const [teamsResult, usersResult, activeChatStatesResult, membershipsResult, joinRequestsResult] =
+        await Promise.allSettled([
             getPublicTeams(),
             listUsers(),
             getActiveChatPartnerStates(userId),
             getTeamMembershipsForUser(userId),
             getJoinRequestsForApplicantByStatuses(userId, ["PENDING", "ACCEPTED"]),
         ]);
-        const myTeamIds = new Set(memberships.map((membership) => membership.teamId));
-        const myRequestedTeamIds = new Set(
-            myJoinRequests
-                .map((item) => item.teamId)
-                .filter((teamId): teamId is string => Boolean(teamId))
-        );
-        const teamsWithJoinState = teams.map((team) => ({
-            ...team,
-            isJoined: myTeamIds.has(team.teamId),
-            isJoinRequested: !myTeamIds.has(team.teamId) && myRequestedTeamIds.has(team.teamId),
-            isOwner: team.primaryOwnerUserId === userId,
-        }));
 
-        // Filter out myself from people list
-        const others = users
-            .filter((u) => u.userId !== userId)
-            .map((u) => {
-                const state = activeChatStates[u.userId];
-                return {
-                    ...u,
-                    chatState: state ?? "NONE",
-                    canRequestChat: !state
-                };
-            });
+    const isRejected = (result: PromiseSettledResult<unknown>) => result.status === "rejected";
+    const hadPartialError =
+        isRejected(teamsResult) ||
+        isRejected(usersResult) ||
+        isRejected(activeChatStatesResult) ||
+        isRejected(membershipsResult) ||
+        isRejected(joinRequestsResult);
 
-        return NextResponse.json({ teams: teamsWithJoinState, people: others });
-    } catch (error) {
-        console.error(error);
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    if (hadPartialError) {
+        console.error("GET /api/discovery partially failed", {
+            teamsError: teamsResult.status === "rejected" ? String(teamsResult.reason) : undefined,
+            usersError: usersResult.status === "rejected" ? String(usersResult.reason) : undefined,
+            chatStatesError:
+                activeChatStatesResult.status === "rejected"
+                    ? String(activeChatStatesResult.reason)
+                    : undefined,
+            membershipsError:
+                membershipsResult.status === "rejected" ? String(membershipsResult.reason) : undefined,
+            joinRequestsError:
+                joinRequestsResult.status === "rejected" ? String(joinRequestsResult.reason) : undefined,
+        });
     }
+
+    const teams = teamsResult.status === "fulfilled" ? teamsResult.value : [];
+    const users = usersResult.status === "fulfilled" ? usersResult.value : [];
+    const activeChatStates = activeChatStatesResult.status === "fulfilled" ? activeChatStatesResult.value : {};
+    const memberships = membershipsResult.status === "fulfilled" ? membershipsResult.value : [];
+    const myJoinRequests = joinRequestsResult.status === "fulfilled" ? joinRequestsResult.value : [];
+
+    const myTeamIds = new Set(memberships.map((membership) => membership.teamId));
+    const myRequestedTeamIds = new Set(
+        myJoinRequests
+            .map((item) => item.teamId)
+            .filter((teamId): teamId is string => Boolean(teamId))
+    );
+    const teamsWithJoinState = teams.map((team) => ({
+        ...team,
+        isJoined: myTeamIds.has(team.teamId),
+        isJoinRequested: !myTeamIds.has(team.teamId) && myRequestedTeamIds.has(team.teamId),
+        isOwner: team.primaryOwnerUserId === userId,
+    }));
+
+    const others = users
+        .filter((u) => u.userId !== userId)
+        .map((u) => {
+            const state = activeChatStates[u.userId];
+            return {
+                ...u,
+                chatState: state ?? "NONE",
+                canRequestChat: !state,
+            };
+        });
+
+    return NextResponse.json({
+        teams: teamsWithJoinState,
+        people: others,
+        partialError: hadPartialError,
+    });
 }
