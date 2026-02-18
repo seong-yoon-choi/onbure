@@ -833,13 +833,24 @@ export default function WorkspacePage() {
 
     useEffect(() => {
         if (!teamId) return;
-        const interval = window.setInterval(() => {
+
+        const refreshVisibleWorkspace = () => {
             if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
             void fetchData({ silent: true });
-        }, 45_000);
+        };
 
+        const onFocus = () => refreshVisibleWorkspace();
+        const onVisibilityChange = () => {
+            if (document.visibilityState === "visible") {
+                refreshVisibleWorkspace();
+            }
+        };
+
+        window.addEventListener("focus", onFocus);
+        document.addEventListener("visibilitychange", onVisibilityChange);
         return () => {
-            window.clearInterval(interval);
+            window.removeEventListener("focus", onFocus);
+            document.removeEventListener("visibilitychange", onVisibilityChange);
         };
     }, [teamId, fetchData]);
 

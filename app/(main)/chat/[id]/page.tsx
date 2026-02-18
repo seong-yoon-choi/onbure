@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Send, Globe, Paperclip } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
+import { useAuditRealtime } from "@/lib/realtime/use-audit-realtime";
 
 interface ChatMessage {
     id: string;
@@ -20,10 +21,12 @@ export default function ChatRoomPage() {
     const { id } = useParams<{ id: string }>();
     const threadId = Array.isArray(id) ? id[0] : id;
     const { data: session } = useSession();
+    const currentUserId = String((session?.user as { id?: string } | undefined)?.id || "").trim();
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState("");
     const [showOriginal, setShowOriginal] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const isPageVisible = () => (typeof document === "undefined" ? true : document.visibilityState === "visible");
 
     const fetchMessages = useCallback(async () => {
         if (!threadId) return;
@@ -37,12 +40,44 @@ export default function ChatRoomPage() {
 
     useEffect(() => {
         void fetchMessages();
-        const interval = setInterval(() => {
-            if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-            void fetchMessages();
-        }, 5000); // Polling for MVP
-        return () => clearInterval(interval);
     }, [fetchMessages]);
+
+    useEffect(() => {
+        const onFocus = () => {
+            if (!isPageVisible()) return;
+            void fetchMessages();
+        };
+        const onVisibilityChange = () => {
+            if (document.visibilityState === "visible") {
+                void fetchMessages();
+            }
+        };
+
+        window.addEventListener("focus", onFocus);
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        return () => {
+            window.removeEventListener("focus", onFocus);
+            document.removeEventListener("visibilitychange", onVisibilityChange);
+        };
+    }, [fetchMessages]);
+
+    useAuditRealtime(Boolean(threadId) && Boolean(currentUserId), (row) => {
+        if (!threadId || !isPageVisible()) return;
+
+        const category = String(row.category || "").toLowerCase();
+        if (category !== "chat") return;
+
+        const metadata = (row.metadata || {}) as Record<string, unknown>;
+        const metadataThreadId = String(metadata.threadId || "").trim();
+        if (metadataThreadId && metadataThreadId !== threadId) return;
+
+        const actorUserId = String(row.actor_user_id || "").trim();
+        const targetUserId = String(row.target_user_id || "").trim();
+        const isDirectEvent = actorUserId === currentUserId || targetUserId === currentUserId;
+        if (!metadataThreadId && !isDirectEvent) return;
+
+        void fetchMessages();
+    });
 
     useEffect(() => {
         if (scrollRef.current) {

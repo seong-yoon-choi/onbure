@@ -227,7 +227,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         }
 
         refreshTopbarAlerts();
-        const intervalId = window.setInterval(refreshTopbarAlerts, 45_000);
         const onFocus = () => refreshTopbarAlerts();
         const onVisibilityChange = () => {
             if (document.visibilityState === "visible") {
@@ -242,7 +241,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         window.addEventListener("onbure-chat-connections-updated", onFocus as EventListener);
 
         return () => {
-            window.clearInterval(intervalId);
             window.removeEventListener("focus", onFocus);
             document.removeEventListener("visibilitychange", onVisibilityChange);
             window.removeEventListener("onbure-chat-alert-refresh", onFocus as EventListener);

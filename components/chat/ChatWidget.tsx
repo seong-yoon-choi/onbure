@@ -796,14 +796,28 @@ export default function ChatWidget({
 
   useEffect(() => {
     if (!isOpen) return;
-    const intervalId = window.setInterval(() => {
+
+    const refreshVisibleData = () => {
       if (!isPageVisible()) return;
       void fetchDirectory();
       if (activeThread) {
         void refreshActiveThread();
       }
-    }, 45_000);
-    return () => window.clearInterval(intervalId);
+    };
+
+    const onFocus = () => refreshVisibleData();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshVisibleData();
+      }
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [isOpen, fetchDirectory, activeThread, refreshActiveThread]);
 
   useEffect(() => {

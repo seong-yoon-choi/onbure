@@ -335,6 +335,24 @@ alter table if exists public.workspace_agreement_notes enable row level security
 alter table if exists public.workspace_comments enable row level security;
 alter table if exists public.audit_logs enable row level security;
 
+alter table if exists public.profiles force row level security;
+alter table if exists public.teams force row level security;
+alter table if exists public.team_members force row level security;
+alter table if exists public.chat_requests force row level security;
+alter table if exists public.team_invites force row level security;
+alter table if exists public.join_requests force row level security;
+alter table if exists public.file_share_requests force row level security;
+alter table if exists public.threads force row level security;
+alter table if exists public.thread_members force row level security;
+alter table if exists public.messages force row level security;
+alter table if exists public.workspace_links force row level security;
+alter table if exists public.workspace_files force row level security;
+alter table if exists public.workspace_tasks force row level security;
+alter table if exists public.workspace_meeting_notes force row level security;
+alter table if exists public.workspace_agreement_notes force row level security;
+alter table if exists public.workspace_comments force row level security;
+alter table if exists public.audit_logs force row level security;
+
 -- Explicit privilege hardening for direct anon/auth API access.
 revoke all on table public.profiles from anon, authenticated;
 revoke all on table public.teams from anon, authenticated;

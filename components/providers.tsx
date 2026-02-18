@@ -1,9 +1,12 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { SessionProvider } from "next-auth/react";
+import { reportClientError } from "@/lib/monitoring/client-errors";
 
 const THEME_STORAGE_KEY = "onbure.theme";
+const CLIENT_ERROR_DEDUPE_WINDOW_MS = 15000;
+const CLIENT_ERROR_DEDUPE_MAX_SIZE = 150;
 
 export type Theme = "light" | "dark";
 
@@ -21,6 +24,7 @@ function applyTheme(theme: Theme) {
 }
 
 export function Providers({ children }: { children: React.ReactNode }) {
+    const recentClientErrorMapRef = useRef<Map<string, number>>(new Map());
     const [theme, setThemeState] = useState<Theme>(() => {
         if (typeof document !== "undefined" && document.documentElement.classList.contains("dark")) {
             return "dark";
@@ -55,6 +59,73 @@ export function Providers({ children }: { children: React.ReactNode }) {
             // Ignore localStorage errors (private mode / blocked storage).
         }
     }, [theme]);
+
+    useEffect(() => {
+        const shouldReport = (key: string) => {
+            const now = Date.now();
+            const dedupeMap = recentClientErrorMapRef.current;
+            const lastAt = dedupeMap.get(key);
+            if (lastAt && now - lastAt < CLIENT_ERROR_DEDUPE_WINDOW_MS) {
+                return false;
+            }
+
+            dedupeMap.set(key, now);
+            if (dedupeMap.size > CLIENT_ERROR_DEDUPE_MAX_SIZE) {
+                const staleCutoff = now - CLIENT_ERROR_DEDUPE_WINDOW_MS;
+                for (const [entryKey, entryAt] of dedupeMap.entries()) {
+                    if (entryAt < staleCutoff) dedupeMap.delete(entryKey);
+                }
+                if (dedupeMap.size > CLIENT_ERROR_DEDUPE_MAX_SIZE) {
+                    const oldest = dedupeMap.entries().next().value as [string, number] | undefined;
+                    if (oldest?.[0]) dedupeMap.delete(oldest[0]);
+                }
+            }
+
+            return true;
+        };
+
+        const onError = (event: ErrorEvent) => {
+            const message = String(event.message || "window.error");
+            const source = String(event.filename || "window.error");
+            const key = `${message}:${source}:${String(event.lineno || 0)}`;
+            if (!shouldReport(key)) return;
+
+            void reportClientError({
+                message,
+                stack: event.error instanceof Error ? event.error.stack : undefined,
+                source,
+                context: {
+                    lineno: event.lineno,
+                    colno: event.colno,
+                },
+            });
+        };
+
+        const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+            const reason = event.reason;
+            const message =
+                reason instanceof Error
+                    ? reason.message
+                    : typeof reason === "string"
+                      ? reason
+                      : "Unhandled promise rejection";
+            const key = `unhandled:${String(message).slice(0, 180)}`;
+            if (!shouldReport(key)) return;
+
+            void reportClientError({
+                message: String(message || "Unhandled promise rejection"),
+                stack: reason instanceof Error ? reason.stack : undefined,
+                source: "unhandledrejection",
+            });
+        };
+
+        window.addEventListener("error", onError);
+        window.addEventListener("unhandledrejection", onUnhandledRejection);
+        return () => {
+            window.removeEventListener("error", onError);
+            window.removeEventListener("unhandledrejection", onUnhandledRejection);
+        };
+    }, []);
 
     const setTheme = useCallback((nextTheme: Theme) => {
         setThemeState(nextTheme);
