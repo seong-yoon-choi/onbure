@@ -1,5 +1,5 @@
 "use client";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -8,6 +8,10 @@ import CreateTeamModal from "@/components/teams/CreateTeamModal";
 import { Globe, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+interface DiscoveryClientPageProps {
+    initialSearchQuery?: string;
+}
+
 interface ContextMenuState {
     x: number;
     y: number;
@@ -15,9 +19,8 @@ interface ContextMenuState {
     id: string;
 }
 
-export default function DiscoveryClientPage() {
+export default function DiscoveryClientPage({ initialSearchQuery = "" }: DiscoveryClientPageProps) {
     const router = useRouter();
-    const searchParams = useSearchParams();
     const [activeTab, setActiveTab] = useState<"teams" | "people">("teams");
     const [teams, setTeams] = useState<any[]>([]);
     const [people, setPeople] = useState<any[]>([]);
@@ -52,7 +55,7 @@ export default function DiscoveryClientPage() {
         error: "",
     });
 
-    const searchQuery = useMemo(() => (searchParams.get("q") || "").trim(), [searchParams]);
+    const searchQuery = useMemo(() => initialSearchQuery.trim(), [initialSearchQuery]);
     const normalizedSearchQuery = searchQuery.toLowerCase();
     const isSearching = normalizedSearchQuery.length > 0;
 
