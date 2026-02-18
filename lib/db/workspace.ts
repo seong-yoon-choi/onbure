@@ -18,6 +18,7 @@ type WorkspaceFileScope = "team" | "user";
 interface WorkspaceFileOptions {
     scope?: WorkspaceFileScope;
     ownerUserId?: string;
+    folderId?: string | null;
 }
 
 function normalizeWorkspaceFileScope(value: string | null | undefined): WorkspaceFileScope {
@@ -27,9 +28,11 @@ function normalizeWorkspaceFileScope(value: string | null | undefined): Workspac
 function resolveWorkspaceFileOptions(options?: WorkspaceFileOptions) {
     const scope = options?.scope === "user" ? "user" : "team";
     const ownerUserId = String(options?.ownerUserId || "").trim();
+    const folderId = String(options?.folderId || "").trim() || null;
     return {
         scope,
         ownerUserId: scope === "user" ? ownerUserId : "",
+        folderId,
     };
 }
 
@@ -152,7 +155,7 @@ export async function getFiles(teamId: string, options?: WorkspaceFileOptions) {
 
 export async function createFile(teamId: string, title: string, _url: string, options?: WorkspaceFileOptions) {
     const fileId = uuidv4();
-    const { scope, ownerUserId } = resolveWorkspaceFileOptions(options);
+    const { scope, ownerUserId, folderId } = resolveWorkspaceFileOptions(options);
 
     if (scope === "user" && !ownerUserId) {
         throw new Error("ownerUserId is required for user-scoped workspace files.");
@@ -167,6 +170,7 @@ export async function createFile(teamId: string, title: string, _url: string, op
                 team_id: teamId,
                 title,
                 url: _url || null,
+                folder_id: folderId,
                 scope,
                 owner_user_id: scope === "user" ? ownerUserId : null,
             },

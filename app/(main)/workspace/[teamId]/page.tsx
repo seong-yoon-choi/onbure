@@ -2324,11 +2324,14 @@ export default function WorkspacePage() {
         }
     };
 
-    const uploadWorkspaceFileRecord = async (file: File) => {
+    const uploadWorkspaceFileRecord = async (file: File, folderId?: string) => {
         if (!teamId) return false;
         const form = new FormData();
         form.append("file", file);
         form.append("scope", workspaceFileScope);
+        if (folderId) {
+            form.append("folderId", folderId);
+        }
 
         const res = await fetch(`/api/workspace/${teamId}/files/upload`, {
             method: "POST",
@@ -2559,14 +2562,17 @@ export default function WorkspacePage() {
         event.target.value = "";
         if (!files.length) return;
 
-        const folderNames = Array.from(
-            new Set(
-                files
-                    .map((file) => (file.webkitRelativePath || "").split("/")[0])
-                    .map((name) => String(name || "").trim())
-                    .filter(Boolean)
-            )
-        ).slice(0, 30);
+        const folderEntries = files
+            .map((file) => {
+                const rootFolderName = String(file.webkitRelativePath || "")
+                    .split("/")
+                    .map((segment) => String(segment || "").trim())
+                    .filter(Boolean)[0];
+                return { file, rootFolderName: String(rootFolderName || "").trim() };
+            })
+            .filter((entry) => Boolean(entry.rootFolderName));
+
+        const folderNames = Array.from(new Set(folderEntries.map((entry) => entry.rootFolderName))).slice(0, 30);
 
         if (!folderNames.length) {
             setNotice({
@@ -2577,24 +2583,55 @@ export default function WorkspacePage() {
             return;
         }
 
-        let successCount = 0;
+        const folderIdByName = new Map<string, string>();
+        let folderSuccessCount = 0;
         for (const folderName of folderNames) {
             const createdId = await createWorkspaceFileRecord(`Folder: ${folderName}`);
-            if (createdId) successCount += 1;
+            if (createdId) {
+                folderSuccessCount += 1;
+                folderIdByName.set(folderName, createdId);
+            }
         }
 
-        if (successCount > 0) {
+        const validEntries = folderEntries.filter((entry) => folderIdByName.has(entry.rootFolderName));
+        const limitedEntries = validEntries.slice(0, 120);
+        let fileSuccessCount = 0;
+        let fileFailedCount = 0;
+
+        for (const entry of limitedEntries) {
+            const folderId = folderIdByName.get(entry.rootFolderName);
+            if (!folderId) {
+                fileFailedCount += 1;
+                continue;
+            }
+            const ok = await uploadWorkspaceFileRecord(entry.file, folderId);
+            if (ok) fileSuccessCount += 1;
+            else fileFailedCount += 1;
+        }
+
+        if (folderSuccessCount > 0 || fileSuccessCount > 0) {
             void fetchData({ silent: true });
             setNotice({
                 open: true,
                 title: "Import completed",
-                message: `Imported ${successCount} folder(s).`,
+                message:
+                    fileFailedCount > 0
+                        ? `Imported ${folderSuccessCount} folder(s), ${fileSuccessCount} file(s). ${fileFailedCount} file(s) failed.`
+                        : `Imported ${folderSuccessCount} folder(s), ${fileSuccessCount} file(s).`,
             });
         } else {
             setNotice({
                 open: true,
                 title: "Import failed",
                 message: "No folders were imported.",
+            });
+        }
+
+        if (validEntries.length > limitedEntries.length) {
+            setNotice({
+                open: true,
+                title: "Import completed",
+                message: `Imported ${folderSuccessCount} folder(s), ${fileSuccessCount} file(s). Up to 120 files are imported at once.`,
             });
         }
     };
@@ -5121,7 +5158,7 @@ export default function WorkspacePage() {
                             }}
                         />
                     )}
-                    {currentFiles.length === 0 && resolvedWorkspaceGroups.length === 0 ? (
+                    {currentFiles.length === 0 ? (
                         <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-[var(--muted)]">
                             우클릭을 해서 파일을 만들어 보세요
                         </p>

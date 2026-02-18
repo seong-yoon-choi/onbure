@@ -60,6 +60,7 @@ export async function POST(
         const form = await req.formData();
         const payload = form.get("file");
         const fileScope = resolveWorkspaceFileScope(form.get("scope"));
+        const folderId = String(form.get("folderId") || "").trim() || undefined;
         if (!(payload instanceof File)) {
             return NextResponse.json({ error: "file is required." }, { status: 400 });
         }
@@ -89,6 +90,7 @@ export async function POST(
         await createFile(teamId, safeName, pointer, {
             scope: fileScope,
             ownerUserId: fileScope === "user" ? currentUserId : undefined,
+            folderId,
         });
         invalidateWorkspaceTeamCache(teamId);
         await appendAuditLog({
