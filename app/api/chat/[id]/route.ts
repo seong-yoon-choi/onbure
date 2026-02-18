@@ -1,8 +1,38 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { createMessageForThread, listMessagesForThread } from "@/lib/db/chat-widget";
-import { appendAuditLog } from "@/lib/db/audit";
+
+type ChatWidgetDbModule = typeof import("@/lib/db/chat-widget");
+type AuditDbModule = typeof import("@/lib/db/audit");
+
+let chatWidgetDbPromise: Promise<ChatWidgetDbModule> | null = null;
+let auditDbPromise: Promise<AuditDbModule> | null = null;
+
+function loadChatWidgetDb() {
+    if (!chatWidgetDbPromise) {
+        chatWidgetDbPromise = import("@/lib/db/chat-widget");
+    }
+    return chatWidgetDbPromise;
+}
+
+function loadAuditDb() {
+    if (!auditDbPromise) {
+        auditDbPromise = import("@/lib/db/audit");
+    }
+    return auditDbPromise;
+}
+
+async function resolveAuthenticatedUserId() {
+    try {
+        const session = await getServerSession(authOptions);
+        const userId = String((session?.user as { id?: string } | undefined)?.id || "").trim();
+        if (!session || !userId) return null;
+        return userId;
+    } catch (error) {
+        console.error("Failed to resolve session in /api/chat/[id]", error);
+        return null;
+    }
+}
 
 function parseTeamId(threadId: string) {
     const normalized = String(threadId || "").trim();
@@ -25,14 +55,13 @@ function parseDmParticipants(threadId: string) {
 }
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const { id } = await params;
-    const currentUserId = String((session.user as { id?: string } | undefined)?.id || "").trim();
+    const currentUserId = await resolveAuthenticatedUserId();
     if (!currentUserId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { id } = await params;
 
     try {
-        const messages = await listMessagesForThread(id, currentUserId);
+        const chatWidgetDb = await loadChatWidgetDb();
+        const messages = await chatWidgetDb.listMessagesForThread(id, currentUserId);
         return NextResponse.json(messages);
     } catch (error: any) {
         if (error?.message === "Forbidden") {
@@ -47,10 +76,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const senderId = await resolveAuthenticatedUserId();
+    if (!senderId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     try {
+        const chatWidgetDb = await loadChatWidgetDb();
+        const auditDb = await loadAuditDb();
         const body = await req.json().catch(() => null);
         if (!body || typeof body !== "object") {
             return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
@@ -58,8 +89,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         const { content, body_original } = body as { content?: string; body_original?: string };
         const { id } = await params;
         const threadId = id;
-        const senderId = String((session.user as { id?: string } | undefined)?.id || "").trim();
-        if (!senderId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         const nextContent =
             typeof body_original === "string" && body_original.trim()
                 ? body_original
@@ -70,11 +99,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             return NextResponse.json({ error: "content is required." }, { status: 400 });
         }
 
-        const result = await createMessageForThread(threadId, senderId, nextContent);
+        const result = await chatWidgetDb.createMessageForThread(threadId, senderId, nextContent);
         const teamId = parseTeamId(threadId);
         const dmParticipants = parseDmParticipants(threadId).filter((userId) => userId !== senderId);
         if (teamId) {
-            await appendAuditLog({
+            await auditDb.appendAuditLog({
                 category: "chat",
                 event: "message_created",
                 actorUserId: senderId,
@@ -85,7 +114,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         } else if (dmParticipants.length) {
             await Promise.all(
                 dmParticipants.map((targetUserId) =>
-                    appendAuditLog({
+                    auditDb.appendAuditLog({
                         category: "chat",
                         event: "message_created",
                         actorUserId: senderId,
