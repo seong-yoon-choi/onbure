@@ -1115,10 +1115,10 @@ export default function ChatWidget({
         >
           <aside className={cn("min-w-0 min-h-0 border-[var(--border)] flex flex-col", isCompact ? "border-b" : "border-r")}>
             <div className="p-2 border-b border-[var(--border)]">
-              <div className="grid grid-cols-2 gap-1">
+              <div className="inline-flex w-auto max-w-full items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--card-bg)] p-1">
                 <button
                   className={cn(
-                    "h-8 rounded-md text-xs font-semibold transition-colors",
+                    "h-7 rounded px-2.5 text-xs font-semibold transition-colors",
                     activeTab === "dm" ? "bg-[var(--primary)] text-[var(--primary-foreground)]" : "bg-[var(--card-bg-hover)] text-[var(--fg)]"
                   )}
                   onClick={() => setActiveTab("dm")}
@@ -1127,7 +1127,7 @@ export default function ChatWidget({
                 </button>
                 <button
                   className={cn(
-                    "h-8 rounded-md text-xs font-semibold transition-colors",
+                    "h-7 rounded px-2.5 text-xs font-semibold transition-colors",
                     activeTab === "team" ? "bg-[var(--primary)] text-[var(--primary-foreground)]" : "bg-[var(--card-bg-hover)] text-[var(--fg)]"
                   )}
                   onClick={() => setActiveTab("team")}
