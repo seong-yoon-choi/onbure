@@ -4,10 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AlertModal } from "@/components/ui/modal";
-import { Check, X, ListFilter, Inbox, History } from "lucide-react";
+import { Check, X, ListFilter } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type Bucket = "requests" | "history";
 type RequestType = "CHAT" | "INVITE" | "JOIN";
 type RequestStatus = "PENDING" | "ACCEPTED" | "DECLINED";
 type TypeFilter = "" | RequestType;
@@ -73,7 +72,6 @@ function requestBodyText(req: RequestItem) {
 }
 
 export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) {
-    const [bucket, setBucket] = useState<Bucket>("requests");
     const [filter, setFilter] = useState<TypeFilter>("");
     const [data, setData] = useState<RequestPayload>({ requests: [], history: [] });
     const [loading, setLoading] = useState(true);
@@ -105,10 +103,10 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
     }, []);
 
     const visibleItems = useMemo(() => {
-        const source = bucket === "requests" ? data.requests : data.history;
-        const filtered = filter ? source.filter((item) => item.type === filter) : source;
+        const merged = [...data.requests, ...data.history];
+        const filtered = filter ? merged.filter((item) => item.type === filter) : merged;
         return sortLatestFirst(filtered);
-    }, [bucket, filter, data]);
+    }, [filter, data]);
 
     const handleAction = async (
         item: RequestItem,
@@ -193,38 +191,11 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
                 </div>
             )}
 
-            <div className="flex border-b border-[var(--border)] gap-6">
-                <button
-                    onClick={() => setBucket("requests")}
-                    className={cn(
-                        "flex items-center gap-2 pb-3 text-sm font-medium transition-colors border-b-2",
-                        bucket === "requests"
-                            ? "border-[var(--primary)] text-[var(--primary)]"
-                            : "border-transparent text-[var(--muted)] hover:text-[var(--fg)]"
-                    )}
-                >
-                    <Inbox className="w-4 h-4" />
-                    Requests
-                </button>
-                <button
-                    onClick={() => setBucket("history")}
-                    className={cn(
-                        "flex items-center gap-2 pb-3 text-sm font-medium transition-colors border-b-2",
-                        bucket === "history"
-                            ? "border-[var(--primary)] text-[var(--primary)]"
-                            : "border-transparent text-[var(--muted)] hover:text-[var(--fg)]"
-                    )}
-                >
-                    <History className="w-4 h-4" />
-                    History
-                </button>
-            </div>
-
             <div className="space-y-4">
                 {loading ? <div className="text-[var(--muted)]">Loading...</div> :
                     visibleItems.length === 0 ? (
                         <div className="text-[var(--muted)] py-10">
-                            {bucket === "requests" ? "No pending requests." : "No history yet."}
+                            No requests yet.
                         </div>
                     ) : (
                         visibleItems.map((req) => (
@@ -244,7 +215,7 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
                                     </p>
                                 </div>
 
-                                {bucket === "requests" && (
+                                {req.status === "PENDING" && (
                                     <div className="flex gap-2 shrink-0">
                                         <Button
                                             size="sm"

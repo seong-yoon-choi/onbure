@@ -9,6 +9,7 @@ import { AlertModal, ConfirmModal } from "@/components/ui/modal";
 
 interface UserProfile {
     username: string;
+    publicCode: string;
     email: string;
     country: string;
     language: string;
@@ -68,6 +69,7 @@ export default function ProfilePage() {
     const [pendingLeaveHref, setPendingLeaveHref] = useState<string | null>(null);
     const [profile, setProfile] = useState<UserProfile>({
         username: "",
+        publicCode: "",
         email: "",
         country: "",
         language: "",
@@ -94,6 +96,7 @@ export default function ProfilePage() {
                 const data = await res.json();
                 const loadedProfile: UserProfile = {
                     username: data.username || data.name || "",
+                    publicCode: data.publicCode || "",
                     email: data.email || "",
                     country: data.country || "KR",
                     language: data.language || "ko",
@@ -340,6 +343,7 @@ export default function ProfilePage() {
                                 {profile.email}
                             </button>
                         )}
+                        <p className="text-xs text-[var(--muted)]">{profile.publicCode || "-"}</p>
                     </div>
                 </div>
                 <button

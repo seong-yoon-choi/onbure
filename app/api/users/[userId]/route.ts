@@ -33,6 +33,7 @@ export async function GET(
 
     return NextResponse.json({
         userId: user.userId,
+        publicCode: user.publicCode || "",
         email: user.email || "",
         username: user.username,
         country: user.country || "",

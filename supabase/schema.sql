@@ -19,6 +19,7 @@ create table if not exists public.profiles (
   user_id text primary key,
   email text not null unique,
   username text not null,
+  public_code text unique,
   password_hash text,
   image_url text,
   country text,
@@ -37,8 +38,12 @@ create trigger trg_profiles_updated_at
 before update on public.profiles
 for each row execute function public.set_updated_at();
 
+alter table if exists public.profiles
+  add column if not exists public_code text;
+
 create index if not exists idx_profiles_email on public.profiles (email);
 create index if not exists idx_profiles_username on public.profiles (username);
+create unique index if not exists idx_profiles_public_code on public.profiles (public_code) where public_code is not null;
 
 -- TEAMS
 create table if not exists public.teams (

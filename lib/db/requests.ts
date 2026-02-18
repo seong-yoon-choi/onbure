@@ -51,6 +51,7 @@ interface SupabaseJoinRequestRow {
 }
 
 interface SupabaseTeamMemberRoleRow {
+    id?: string;
     team_id: string;
     user_id: string;
     role: string;
@@ -172,6 +173,34 @@ function readMessageFromProperties(properties: Record<string, any> | undefined) 
         getTextValue(properties.note) ||
         ""
     );
+}
+
+async function isUserAlreadyInTeam(teamId: string, userId: string): Promise<boolean> {
+    const normalizedTeamId = String(teamId || "").trim();
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedTeamId || !normalizedUserId) return false;
+
+    if (isSupabaseBackend()) {
+        const rows = (await supabaseRest(
+            `/team_members?select=id&team_id=eq.${encodeURIComponent(normalizedTeamId)}&user_id=eq.${encodeURIComponent(
+                normalizedUserId
+            )}&limit=1`
+        )) as Array<{ id?: string }>;
+        return rows.length > 0;
+    }
+
+    const response = await notion.databases.query({
+        database_id: DB_TEAM_MEMBERS,
+        filter: {
+            and: [
+                { property: "team_id", rich_text: { equals: normalizedTeamId } },
+                { property: "user_id", rich_text: { equals: normalizedUserId } },
+            ],
+        },
+        page_size: 1,
+    });
+
+    return (response.results as any[]).length > 0;
 }
 
 function asRequestItem(
@@ -488,6 +517,10 @@ export async function getActiveChatPartnerStates(
 
 // --- TEAM INVITES ---
 export async function createTeamInvite(teamId: string, inviterId: string, inviteeId: string, message: string) {
+    if (await isUserAlreadyInTeam(teamId, inviteeId)) {
+        throw new RequestConflictError("This user is already in the same team.", "INVITE");
+    }
+
     if (isSupabaseBackend()) {
         const existing = (await supabaseRest(
             `/team_invites?select=*&team_id=eq.${encodeURIComponent(teamId)}&invitee_user_id=eq.${encodeURIComponent(inviteeId)}`

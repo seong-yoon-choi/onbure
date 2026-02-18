@@ -68,7 +68,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
     const [openSlotsInput, setOpenSlotsInput] = useState<string>("0");
     const [commitmentHoursPerWeek, setCommitmentHoursPerWeek] = useState<(typeof COMMITMENT_OPTIONS)[number]>("6-10");
     const [workStyle, setWorkStyle] = useState<(typeof WORK_STYLE_OPTIONS)[number]>("hybrid");
-    const [showWorkStyleHelp, setShowWorkStyleHelp] = useState(false);
+    const [workStyleTooltip, setWorkStyleTooltip] = useState<{ x: number; y: number } | null>(null);
     const [visibility, setVisibility] = useState<(typeof VISIBILITY_OPTIONS)[number]>("private");
     const [roleInput, setRoleInput] = useState("");
     const [recruitingRoles, setRecruitingRoles] = useState<string[]>([]);
@@ -97,7 +97,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
     useEffect(() => {
         if (!open) return;
         setError("");
-        setShowWorkStyleHelp(false);
+        setWorkStyleTooltip(null);
         const inferredTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
         if (typeof inferredTimezone === "string" && inferredTimezone.trim()) {
             setTimezone(inferredTimezone.trim());
@@ -143,7 +143,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
         setOpenSlotsInput("0");
         setCommitmentHoursPerWeek("6-10");
         setWorkStyle("hybrid");
-        setShowWorkStyleHelp(false);
+        setWorkStyleTooltip(null);
         setVisibility("private");
         setRoleInput("");
         setRecruitingRoles([]);
@@ -164,7 +164,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
 
         setIsSubmitting(true);
         setError("");
-        setShowWorkStyleHelp(false);
+        setWorkStyleTooltip(null);
 
         try {
             const res = await fetch("/api/teams", {
@@ -222,14 +222,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
     if (!open) return null;
 
     return (
-        <div
-            className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 backdrop-blur-sm px-4"
-            onMouseDown={(event) => {
-                if (!isSubmitting && event.target === event.currentTarget) {
-                    onClose();
-                }
-            }}
-        >
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 backdrop-blur-sm px-4">
             <div className="w-full max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] shadow-2xl">
                 <div className="px-5 py-4 border-b border-[var(--border)]">
                     <div className="flex items-center justify-between gap-3">
@@ -400,14 +393,24 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                             <div className="space-y-1">
                                 <div className="flex items-center gap-1.5">
                                     <label className="text-xs text-[var(--muted)]">Work Style</label>
-                                    <button
-                                        type="button"
-                                        aria-label="Work style guide"
-                                        onClick={() => setShowWorkStyleHelp((prev) => !prev)}
-                                        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[var(--border)] text-[10px] font-semibold text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]"
-                                    >
-                                        !
-                                    </button>
+                                    <span className="group relative inline-flex h-4 w-4 items-center justify-center">
+                                        <button
+                                            type="button"
+                                            aria-label="Work style guide"
+                                            onMouseEnter={(event) => {
+                                                const rect = event.currentTarget.getBoundingClientRect();
+                                                setWorkStyleTooltip({ x: rect.right + 8, y: rect.top + rect.height / 2 });
+                                            }}
+                                            onMouseMove={(event) => {
+                                                const rect = event.currentTarget.getBoundingClientRect();
+                                                setWorkStyleTooltip({ x: rect.right + 8, y: rect.top + rect.height / 2 });
+                                            }}
+                                            onMouseLeave={() => setWorkStyleTooltip(null)}
+                                            className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[var(--border)] text-[11px] font-semibold text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]"
+                                        >
+                                            !
+                                        </button>
+                                    </span>
                                 </div>
                                 <select
                                     value={workStyle}
@@ -420,17 +423,6 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                         </option>
                                     ))}
                                 </select>
-                                {showWorkStyleHelp && (
-                                    <div className="rounded-md border border-[var(--border)] bg-[var(--input-bg)] p-2 text-[11px] text-[var(--muted)] space-y-1.5">
-                                        {WORK_STYLE_HELP_ITEMS.map((item) => (
-                                            <p key={item.label}>
-                                                <span className="text-[var(--fg)]">{item.label}</span>: {item.description}
-                                                <br />
-                                                Example: {item.example}
-                                            </p>
-                                        ))}
-                                    </div>
-                                )}
                             </div>
 
                             <div className="space-y-1">
@@ -549,6 +541,20 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                     void submit();
                 }}
             />
+            {workStyleTooltip && (
+                <div
+                    className="pointer-events-none fixed z-[90] max-w-[320px] rounded border border-[var(--border)] bg-[var(--card-bg)] px-2.5 py-1.5 text-xs text-[var(--fg)] shadow-md"
+                    style={{ left: workStyleTooltip.x, top: workStyleTooltip.y, transform: "translateY(-50%)" }}
+                >
+                    {WORK_STYLE_HELP_ITEMS.map((item) => (
+                        <div key={item.label} className="mb-1 last:mb-0">
+                            <span className="text-[var(--fg)]">{item.label}</span>: {item.description}
+                            <br />
+                            Example: {item.example}
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }

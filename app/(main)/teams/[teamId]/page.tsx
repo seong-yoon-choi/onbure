@@ -168,7 +168,7 @@ export default function TeamDetailPage() {
     const [isDeleting, setIsDeleting] = useState(false);
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
     const [deleteError, setDeleteError] = useState("");
-    const [showWorkStyleHelp, setShowWorkStyleHelp] = useState(false);
+    const [workStyleTooltip, setWorkStyleTooltip] = useState<{ x: number; y: number } | null>(null);
     const [leaveModalOpen, setLeaveModalOpen] = useState(false);
     const [pendingLeaveHref, setPendingLeaveHref] = useState<string | null>(null);
     const [profileMenu, setProfileMenu] = useState<ProfileMenuState | null>(null);
@@ -543,7 +543,12 @@ export default function TeamDetailPage() {
 
                     <div className="flex items-center gap-2">
                         {canEdit && !isEditing && (
-                            <Button size="sm" variant="outline" onClick={() => setIsEditing(true)}>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
+                                onClick={() => setIsEditing(true)}
+                            >
                                 Edit Profile
                             </Button>
                         )}
@@ -711,14 +716,24 @@ export default function TeamDetailPage() {
                         <div className="space-y-1">
                             <div className="flex items-center gap-1.5">
                                 <label className="text-[10px] text-[var(--muted)] uppercase">Work Style</label>
+                            <span className="group relative inline-flex h-4 w-4 items-center justify-center">
                                 <button
                                     type="button"
                                     aria-label="Work style guide"
-                                    onClick={() => setShowWorkStyleHelp((prev) => !prev)}
+                                    onMouseEnter={(event) => {
+                                        const rect = event.currentTarget.getBoundingClientRect();
+                                        setWorkStyleTooltip({ x: rect.right + 8, y: rect.top + rect.height / 2 });
+                                    }}
+                                    onMouseMove={(event) => {
+                                        const rect = event.currentTarget.getBoundingClientRect();
+                                        setWorkStyleTooltip({ x: rect.right + 8, y: rect.top + rect.height / 2 });
+                                    }}
+                                    onMouseLeave={() => setWorkStyleTooltip(null)}
                                     className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[var(--border)] text-[10px] font-semibold text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]"
                                 >
                                     !
                                 </button>
+                            </span>
                             </div>
                             <select
                                 value={form.workStyle}
@@ -729,17 +744,6 @@ export default function TeamDetailPage() {
                                     <option key={option} value={option}>{WORK_STYLE_LABELS[option]}</option>
                                 ))}
                             </select>
-                            {showWorkStyleHelp && (
-                                <div className="rounded-md border border-[var(--border)] bg-[var(--card-bg)] p-2 text-[11px] text-[var(--muted)] space-y-1.5">
-                                    {WORK_STYLE_HELP_ITEMS.map((item) => (
-                                        <p key={item.label}>
-                                            <span className="text-[var(--fg)]">{item.label}</span>: {item.description}
-                                            <br />
-                                            Example: {item.example}
-                                        </p>
-                                    ))}
-                                </div>
-                            )}
                         </div>
                         <div className="space-y-1 sm:col-span-2">
                             <label className="text-[10px] text-[var(--muted)] uppercase">Recruiting Roles</label>
@@ -813,27 +817,26 @@ export default function TeamDetailPage() {
                     <div className="rounded-lg border border-[var(--border)] px-3 py-2 sm:col-span-2 lg:col-span-3">
                         <div className="flex items-center gap-1.5">
                             <p className="text-[10px] text-[var(--muted)] uppercase">Work Style</p>
-                            <button
-                                type="button"
-                                aria-label="Work style guide"
-                                onClick={() => setShowWorkStyleHelp((prev) => !prev)}
-                                className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[var(--border)] text-[10px] font-semibold text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]"
-                            >
-                                !
-                            </button>
+                            <span className="group relative inline-flex h-4 w-4 items-center justify-center">
+                                <button
+                                    type="button"
+                                    aria-label="Work style guide"
+                                    onMouseEnter={(event) => {
+                                        const rect = event.currentTarget.getBoundingClientRect();
+                                        setWorkStyleTooltip({ x: rect.right + 8, y: rect.top + rect.height / 2 });
+                                    }}
+                                    onMouseMove={(event) => {
+                                        const rect = event.currentTarget.getBoundingClientRect();
+                                        setWorkStyleTooltip({ x: rect.right + 8, y: rect.top + rect.height / 2 });
+                                    }}
+                                    onMouseLeave={() => setWorkStyleTooltip(null)}
+                                    className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[var(--border)] text-[10px] font-semibold text-[var(--muted)] hover:text-[var(--fg)] hover:border-[var(--fg)]"
+                                >
+                                    !
+                                </button>
+                            </span>
                         </div>
                         <p className="text-[var(--fg)] mt-1">{formatWorkStyle(team.workStyle || "hybrid")}</p>
-                        {showWorkStyleHelp && (
-                            <div className="mt-2 rounded-md border border-[var(--border)] bg-[var(--input-bg)] p-2 text-[11px] text-[var(--muted)] space-y-1.5">
-                                {WORK_STYLE_HELP_ITEMS.map((item) => (
-                                    <p key={item.label}>
-                                        <span className="text-[var(--fg)]">{item.label}</span>: {item.description}
-                                        <br />
-                                        Example: {item.example}
-                                    </p>
-                                ))}
-                            </div>
-                        )}
                     </div>
                 </div>
 
@@ -901,6 +904,20 @@ export default function TeamDetailPage() {
                 </button>
             </div>
         )}
+        {workStyleTooltip && (
+            <div
+                className="pointer-events-none fixed z-[90] max-w-[320px] rounded border border-[var(--border)] bg-[var(--card-bg)] px-2.5 py-1.5 text-xs text-[var(--fg)] shadow-md"
+                style={{ left: workStyleTooltip.x, top: workStyleTooltip.y, transform: "translateY(-50%)" }}
+            >
+                {WORK_STYLE_HELP_ITEMS.map((item) => (
+                    <div key={item.label} className="mb-1 last:mb-0">
+                        <span className="text-[var(--fg)]">{item.label}</span>: {item.description}
+                        <br />
+                        Example: {item.example}
+                    </div>
+                ))}
+            </div>
+        )}
         <ConfirmModal
             open={leaveModalOpen}
             title="Unsaved Changes"
@@ -924,4 +941,3 @@ export default function TeamDetailPage() {
         </>
     );
 }
-

@@ -11,11 +11,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     ({ className, variant = "primary", size = "md", isLoading, children, disabled, ...props }, ref) => {
         const variants = {
-            primary: "bg-[var(--primary)] text-[var(--primary-foreground)] hover:brightness-95 shadow-md",
-            secondary: "bg-[var(--card-bg)] text-[var(--fg)] hover:bg-[var(--card-bg-hover)] border border-[var(--border)]",
-            ghost: "bg-transparent text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--card-bg)]",
-            destructive: "bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20",
-            outline: "bg-transparent border border-[var(--border)] text-[var(--fg)] hover:bg-[var(--card-bg)]",
+            primary: "bg-[var(--primary)] text-[var(--primary-foreground)] hover:brightness-95 active:brightness-90 shadow-md",
+            secondary: "bg-[var(--card-bg)] text-[var(--fg)] hover:bg-[var(--card-bg-hover)] active:bg-[var(--card-bg-hover)] border border-[var(--border)]",
+            ghost: "bg-transparent text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--card-bg-hover)] active:bg-[var(--card-bg-hover)]",
+            destructive: "bg-red-500/10 text-red-500 hover:bg-red-500/20 active:bg-red-500/25 border border-red-500/20",
+            outline: "bg-transparent border border-[var(--border)] text-[var(--fg)] hover:bg-[var(--card-bg-hover)] active:bg-[var(--card-bg-hover)] hover:text-[var(--fg)]",
         };
 
         const sizes = {
@@ -30,7 +30,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
                 ref={ref}
                 disabled={disabled || isLoading}
                 className={cn(
-                    "inline-flex items-center justify-center rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]/40 disabled:opacity-50 disabled:cursor-not-allowed",
+                    "inline-flex items-center justify-center rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]/40 active:translate-y-[0.5px] disabled:opacity-50 disabled:cursor-not-allowed",
                     variants[variant],
                     sizes[size],
                     className

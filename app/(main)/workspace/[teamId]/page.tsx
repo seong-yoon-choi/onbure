@@ -628,6 +628,7 @@ export default function WorkspacePage() {
     const [groupDragPreview, setGroupDragPreview] = useState<GroupDragPreviewState | null>(null);
     const [groupEntryReorderDrag, setGroupEntryReorderDrag] = useState<GroupEntryReorderDragState | null>(null);
     const [groupEntryReorderHover, setGroupEntryReorderHover] = useState<GroupEntryReorderHoverState | null>(null);
+    const [groupHintTooltip, setGroupHintTooltip] = useState<{ x: number; y: number } | null>(null);
     const [closedFolders, setClosedFolders] = useState<Record<string, boolean>>({});
     const [openCanvasFolders, setOpenCanvasFolders] = useState<Record<string, boolean>>({});
     const [openGroupFolderItems, setOpenGroupFolderItems] = useState<Record<string, boolean>>({});
@@ -4914,11 +4915,6 @@ export default function WorkspacePage() {
                                             draggable={!isInlineEditingGroup}
                                             onDragStart={(event) => handleGroupDragStart(event, group.id)}
                                             onDragEnd={handleGroupDragEnd}
-                                            onDoubleClick={(event) => {
-                                                event.preventDefault();
-                                                event.stopPropagation();
-                                                startGroupInlineRename(group.id);
-                                            }}
                                             onClick={() =>
                                                 !isInlineEditingGroup &&
                                                 setClosedGroups((prev) => ({
@@ -4976,6 +4972,36 @@ export default function WorkspacePage() {
                                                     />
                                                 ) : (
                                                     <span className="block truncate">{group.name}</span>
+                                                )}
+                                                {!isInlineEditingGroup && (
+                                                    <span className="group relative inline-flex shrink-0 items-center overflow-visible">
+                                                        <span
+                                                            className="inline-flex h-4 w-4 items-center justify-center rounded-full border-2 border-[var(--border)] text-[10px] font-semibold text-[var(--muted)]"
+                                                            onPointerDown={(event) => event.stopPropagation()}
+                                                            onClick={(event) => event.stopPropagation()}
+                                                            onMouseEnter={(event) => {
+                                                                const rect = event.currentTarget.getBoundingClientRect();
+                                                                setGroupHintTooltip({
+                                                                    x: rect.right + 8,
+                                                                    y: rect.top + rect.height / 2,
+                                                                });
+                                                            }}
+                                                            onMouseMove={(event) => {
+                                                                const rect = event.currentTarget.getBoundingClientRect();
+                                                                setGroupHintTooltip({
+                                                                    x: rect.right + 8,
+                                                                    y: rect.top + rect.height / 2,
+                                                                });
+                                                            }}
+                                                            onMouseLeave={() => setGroupHintTooltip(null)}
+                                                            aria-label="Ctrl drag guide"
+                                                        >
+                                                            !
+                                                        </span>
+                                                        <span className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded border border-[var(--border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] text-[var(--fg)] shadow-md group-hover:block">
+                                                            ctrl을 누르고 아이콘을 드래그 하세요
+                                                        </span>
+                                                    </span>
                                                 )}
                                                 <span className="ml-auto text-[10px] text-[var(--muted)]">
                                                     {group.items.length}
@@ -6262,6 +6288,14 @@ export default function WorkspacePage() {
                     >
                         그룹에서 제거
                     </button>
+                </div>
+            )}
+            {groupHintTooltip && (
+                <div
+                    className="pointer-events-none fixed z-[80] whitespace-nowrap rounded border border-[var(--border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] text-[var(--fg)] shadow-md"
+                    style={{ left: groupHintTooltip.x, top: groupHintTooltip.y, transform: "translateY(-50%)" }}
+                >
+                    ctrl을 누르고 아이콘을 드래그 하세요
                 </div>
             )}
 

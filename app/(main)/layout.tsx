@@ -376,7 +376,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                                         key={item.href}
                                         href={item.href}
                                         className={cn(
-                                            "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                                            "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-default",
                                             isActive
                                                 ? "bg-[var(--card-bg)] text-[var(--fg)] border border-[var(--border)]"
                                                 : "text-[var(--muted)] hover:text-[var(--fg)]"
@@ -446,10 +446,18 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                         <Search className="absolute left-3 top-2.5 h-4 w-4 text-[var(--muted)]" />
                         <Input
                             placeholder="Search teams & people..."
-                            className="pl-9 h-9 text-sm transition-colors w-full"
+                            className="pl-9 pr-20 h-9 text-sm transition-colors w-full"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
+                        <Button
+                            type="submit"
+                            size="sm"
+                            variant="ghost"
+                            className="absolute right-1 top-1 h-7 px-2 text-xs text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                        >
+                            Search
+                        </Button>
                     </form>
                 </div>
 

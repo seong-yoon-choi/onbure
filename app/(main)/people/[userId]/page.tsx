@@ -11,6 +11,7 @@ type ChatState = "NONE" | "PENDING" | "ACCEPTED";
 
 interface PublicUserProfile {
     userId: string;
+    publicCode: string;
     email: string;
     username: string;
     country: string;
@@ -99,6 +100,7 @@ export default function PeopleProfilePage() {
             const data = (await res.json()) as Partial<PublicUserProfile>;
             setProfile({
                 userId: data.userId || "",
+                publicCode: data.publicCode || "",
                 email: data.email || "",
                 username: data.username || "",
                 country: data.country || "",
@@ -294,13 +296,19 @@ export default function PeopleProfilePage() {
                         <div className="min-w-0">
                             <h1 className="text-2xl font-bold text-[var(--fg)] truncate">{profile.username}</h1>
                             <p className="text-sm text-[var(--muted)]">{profile.email || "-"}</p>
+                            <p className="text-xs text-[var(--muted)]">{profile.publicCode || "-"}</p>
                         </div>
                     </div>
 
                     {!profile.isSelf && (
                         <div className="flex items-center gap-2">
                             {profile.canRequestChat ? (
-                                <Button size="sm" variant="outline" className="h-8 text-xs px-3" onClick={openChatComposer}>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 text-xs px-3 text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
+                                    onClick={openChatComposer}
+                                >
                                     Chat
                                 </Button>
                             ) : (
@@ -309,7 +317,12 @@ export default function PeopleProfilePage() {
                                 </span>
                             )}
                             {profile.canInvite && (
-                                <Button size="sm" variant="outline" className="h-8 text-xs px-3" onClick={() => void openInviteComposer()}>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 text-xs px-3 text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
+                                    onClick={() => void openInviteComposer()}
+                                >
                                     Invite
                                 </Button>
                             )}

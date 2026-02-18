@@ -11,6 +11,7 @@ export interface User {
     userId: string;
     email: string;
     username: string; // Changed from name
+    publicCode?: string;
     passwordHash?: string;
     image?: string;
     country?: string;
@@ -28,6 +29,7 @@ interface SupabaseProfileRow {
     user_id: string;
     email: string;
     username: string;
+    public_code?: string | null;
     password_hash?: string | null;
     image_url?: string | null;
     country?: string | null;
@@ -41,12 +43,21 @@ interface SupabaseProfileRow {
     updated_at?: string;
 }
 
+function fallbackPublicCodeFromUserId(userId: string): string {
+    const token = String(userId || "")
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .slice(0, 10)
+        .toUpperCase();
+    return `ONB-${token || "USER"}`;
+}
+
 function mapSupabaseProfileToUser(row: SupabaseProfileRow): User {
     return {
         id: row.user_id,
         userId: row.user_id,
         email: row.email || "",
         username: row.username || "Unknown",
+        publicCode: (row.public_code || "").trim() || fallbackPublicCodeFromUserId(row.user_id),
         passwordHash: row.password_hash || "",
         image: row.image_url || undefined,
         country: row.country || undefined,
@@ -82,6 +93,32 @@ function normalizeAvailability(input: string | number | undefined | null): strin
     if (num <= 20) return "11-20";
     if (num <= 40) return "21-40";
     return "40+";
+}
+
+async function isPublicCodeTaken(code: string): Promise<boolean> {
+    try {
+        const rows = (await supabaseRest(
+            `/profiles?select=user_id&public_code=eq.${encodeURIComponent(code)}&limit=1`
+        )) as Array<{ user_id: string }>;
+        return rows.length > 0;
+    } catch {
+        // If column is not migrated yet, skip collision check and rely on fallback insert path.
+        return false;
+    }
+}
+
+async function generateUniquePublicCode(): Promise<string> {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+        let body = "";
+        for (let i = 0; i < 6; i += 1) {
+            body += alphabet[Math.floor(Math.random() * alphabet.length)];
+        }
+        const code = `ONB-${body}`;
+        if (!(await isPublicCodeTaken(code))) return code;
+    }
+    const fallback = uuidv4().replace(/-/g, "").slice(0, 8).toUpperCase();
+    return `ONB-${fallback}`;
 }
 
 export async function getUserByEmail(email: string): Promise<User | null> {
@@ -143,6 +180,7 @@ export async function getUserByEmail(email: string): Promise<User | null> {
         userId: getTextValue(props.user_id),
         email: props.email?.email || "",
         username: username || "Unknown",
+        publicCode: fallbackPublicCodeFromUserId(getTextValue(props.user_id)),
         passwordHash: getTextValue(props.password_hash),
         country: getSelectValue(props.country),
         language: getSelectValue(props.language),
@@ -196,6 +234,7 @@ export async function getUserByUserId(userId: string): Promise<User | null> {
         userId: getTextValue(props.user_id),
         email: props.email?.email || "",
         username: username || "Unknown",
+        publicCode: fallbackPublicCodeFromUserId(getTextValue(props.user_id)),
         passwordHash: getTextValue(props.password_hash),
         country: getSelectValue(props.country),
         language: getSelectValue(props.language),
@@ -210,27 +249,48 @@ export async function getUserByUserId(userId: string): Promise<User | null> {
 export async function createUser(data: { email: string; username: string; password?: string }) {
     if (isSupabaseBackend()) {
         const userId = uuidv4();
+        const publicCode = await generateUniquePublicCode();
         const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || "10", 10);
         const passwordHash = data.password ? await bcrypt.hash(data.password, saltRounds) : "";
+        const baseBody = {
+            user_id: userId,
+            email: data.email,
+            username: data.username,
+            password_hash: passwordHash,
+            country: "KR",
+            language: "ko",
+            skills: [],
+            availability_hours_per_week: "40+",
+            bio: "",
+            portfolio_links: [],
+        };
 
-        await supabaseRest("/profiles", {
-            method: "POST",
-            prefer: "return=representation",
-            body: {
-                user_id: userId,
+        try {
+            await supabaseRest("/profiles", {
+                method: "POST",
+                prefer: "return=representation",
+                body: {
+                    ...baseBody,
+                    public_code: publicCode,
+                },
+            });
+            return { email: data.email, username: data.username, userId, publicCode };
+        } catch (error: any) {
+            const message = String(error?.message || "");
+            if (!message.includes("public_code")) throw error;
+
+            await supabaseRest("/profiles", {
+                method: "POST",
+                prefer: "return=representation",
+                body: baseBody,
+            });
+            return {
                 email: data.email,
                 username: data.username,
-                password_hash: passwordHash,
-                country: "KR",
-                language: "ko",
-                skills: [],
-                availability_hours_per_week: "40+",
-                bio: "",
-                portfolio_links: [],
-            },
-        });
-
-        return { email: data.email, username: data.username, userId };
+                userId,
+                publicCode: fallbackPublicCodeFromUserId(userId),
+            };
+        }
     }
 
     const dbId = getDatabaseId(DB_KEY);
@@ -288,7 +348,12 @@ export async function createUser(data: { email: string; username: string; passwo
         properties: properties,
     });
 
-    return { email: data.email, username: data.username, userId };
+    return {
+        email: data.email,
+        username: data.username,
+        userId,
+        publicCode: fallbackPublicCodeFromUserId(userId),
+    };
 }
 
 export async function updateUserProfile(userId: string, data: Partial<User>) {
@@ -403,6 +468,7 @@ export async function listUsers(): Promise<User[]> {
             userId: getTextValue(props.user_id),
             email: props.email?.email || "",
             username: getTextValue(props.username) || "Unknown",
+            publicCode: fallbackPublicCodeFromUserId(getTextValue(props.user_id)),
             passwordHash: getTextValue(props.password_hash),
             country: getSelectValue(props.country),
             language: getSelectValue(props.language),

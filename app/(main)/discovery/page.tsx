@@ -1,6 +1,6 @@
 "use client";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { AlertModal } from "@/components/ui/modal";
@@ -17,6 +17,7 @@ interface ContextMenuState {
 
 export default function DiscoveryPage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const [activeTab, setActiveTab] = useState<"teams" | "people">("teams");
     const [teams, setTeams] = useState<any[]>([]);
     const [people, setPeople] = useState<any[]>([]);
@@ -50,6 +51,10 @@ export default function DiscoveryPage() {
         isSubmitting: false,
         error: "",
     });
+
+    const searchQuery = useMemo(() => (searchParams.get("q") || "").trim(), [searchParams]);
+    const normalizedSearchQuery = searchQuery.toLowerCase();
+    const isSearching = normalizedSearchQuery.length > 0;
 
     const normalizeShortMessage = (value: string, fallback: string) => {
         const trimmed = value.trim().replace(/\s+/g, " ");
@@ -317,56 +322,238 @@ export default function DiscoveryPage() {
         }
     };
 
+    const filteredTeams = useMemo(() => {
+        if (!normalizedSearchQuery) return teams;
+        return teams.filter((team) => {
+            const candidates = [
+                team?.name,
+                team?.description,
+                team?.visibility,
+                team?.stage,
+                team?.language,
+                ...(Array.isArray(team?.recruitingRoles) ? team.recruitingRoles : []),
+            ]
+                .filter(Boolean)
+                .map((value) => String(value).toLowerCase());
+            return candidates.some((value) => value.includes(normalizedSearchQuery));
+        });
+    }, [teams, normalizedSearchQuery]);
+
+    const filteredPeople = useMemo(() => {
+        if (!normalizedSearchQuery) return people;
+        return people.filter((person) => {
+            const candidates = [
+                person?.username,
+                person?.publicCode,
+                person?.bio,
+                person?.country,
+                person?.language,
+                person?.availabilityHours,
+                ...(Array.isArray(person?.skills) ? person.skills : []),
+            ]
+                .filter(Boolean)
+                .map((value) => String(value).toLowerCase());
+            return candidates.some((value) => value.includes(normalizedSearchQuery));
+        });
+    }, [people, normalizedSearchQuery]);
+
     return (
         <>
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-bold text-[var(--fg)]">Discovery</h1>
-                    <p className="text-[var(--muted)]">Explore teams and people.</p>
+            {isSearching ? (
+                <div className="space-y-1 border-b border-[var(--border)] pb-4">
+                    <h1 className="text-2xl font-bold text-[var(--fg)]">Search Results</h1>
+                    <p className="text-sm text-[var(--muted)]">
+                        {searchQuery} - Teams {filteredTeams.length}, People {filteredPeople.length}
+                    </p>
                 </div>
-                {activeTab === "teams" && (
-                    <Button onClick={() => setIsCreateTeamOpen(true)}>
-                        <Plus className="w-4 h-4 mr-2" />
-                        Create Team
-                    </Button>
-                )}
-            </div>
+            ) : (
+                <>
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h1 className="text-2xl font-bold text-[var(--fg)]">Discovery</h1>
+                            <p className="text-[var(--muted)]">Explore teams and people.</p>
+                        </div>
+                        {activeTab === "teams" && (
+                            <Button onClick={() => setIsCreateTeamOpen(true)} className="hover:brightness-90 active:brightness-85">
+                                <Plus className="w-4 h-4 mr-2" />
+                                Create Team
+                            </Button>
+                        )}
+                    </div>
 
-            <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
-                <div className="flex gap-4">
-                    <button
-                        onClick={() => setActiveTab("teams")}
-                        className={cn(
-                            "text-sm font-medium transition-colors pb-1 border-b-2",
-                            activeTab === "teams" ? "text-[var(--primary)] border-[var(--primary)]" : "text-[var(--muted)] border-transparent hover:text-[var(--fg)]"
+                    <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
+                        <div className="flex gap-4">
+                            <button
+                                onClick={() => setActiveTab("teams")}
+                                className={cn(
+                                    "text-sm font-medium transition-colors pb-1 border-b-2",
+                                    activeTab === "teams" ? "text-[var(--primary)] border-[var(--primary)]" : "text-[var(--muted)] border-transparent hover:text-[var(--fg)]"
+                                )}
+                            >
+                                Teams
+                            </button>
+                            <button
+                                onClick={() => setActiveTab("people")}
+                                className={cn(
+                                    "text-sm font-medium transition-colors pb-1 border-b-2",
+                                    activeTab === "people" ? "text-[var(--primary)] border-[var(--primary)]" : "text-[var(--muted)] border-transparent hover:text-[var(--fg)]"
+                                )}
+                            >
+                                People
+                            </button>
+                        </div>
+                        {activeTab === "teams" && (
+                            <p className="text-xs text-[var(--muted)]">Discovery shows public teams only.</p>
                         )}
-                    >
-                        Teams
-                    </button>
-                    <button
-                        onClick={() => setActiveTab("people")}
-                        className={cn(
-                            "text-sm font-medium transition-colors pb-1 border-b-2",
-                            activeTab === "people" ? "text-[var(--primary)] border-[var(--primary)]" : "text-[var(--muted)] border-transparent hover:text-[var(--fg)]"
-                        )}
-                    >
-                        People
-                    </button>
-                </div>
-                {activeTab === "teams" && (
-                    <p className="text-xs text-[var(--muted)]">Discovery shows public teams only.</p>
-                )}
-            </div>
+                    </div>
+                </>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {loading ? <div className="text-[var(--muted)]">Loading...</div> :
-                    activeTab === "teams" ? (
-                        teams.map(team => {
+                    isSearching ? (
+                        filteredTeams.length === 0 && filteredPeople.length === 0 ? (
+                            <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-6 text-sm text-[var(--muted)]">
+                                No results matched your search.
+                            </div>
+                        ) : (
+                            <>
+                                {filteredTeams.map(team => {
+                                    return (
+                                    <Card
+                                        key={`team:${team.id}`}
+                                        className="p-5 hover:shadow-lg transition-colors"
+                                        onContextMenu={(event) => openProfileMenu(event, "team", team.teamId)}
+                                    >
+                                        <div className="flex justify-between items-start mb-3">
+                                            <div className="h-10 w-10 rounded bg-[var(--card-bg-hover)] border border-[var(--border)] flex items-center justify-center text-[var(--primary)]">
+                                                <Globe className="w-5 h-5" />
+                                            </div>
+                                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] border border-emerald-500/20">
+                                                {team.visibility}
+                                            </span>
+                                        </div>
+                                        <p className="font-bold text-[var(--fg)]">
+                                            {team.name}
+                                        </p>
+                                        <p className="text-sm text-[var(--muted)] mt-1 line-clamp-2 h-10">{team.description}</p>
+                                        {team.isJoined ? (
+                                            <span className="w-full mt-4 h-9 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
+                                                Already Joined
+                                            </span>
+                                        ) : team.isJoinRequested ? (
+                                            <span className="w-full mt-4 h-9 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
+                                                Requested
+                                            </span>
+                                        ) : (
+                                            <Button
+                                                className="w-full mt-4"
+                                                variant="secondary"
+                                                size="sm"
+                                                onClick={() => openJoinComposer(team)}
+                                                disabled={
+                                                    composer.isSubmitting &&
+                                                    composer.mode === "JOIN" &&
+                                                    composer.toUserId === team.teamId
+                                                }
+                                            >
+                                                {composer.isSubmitting &&
+                                                composer.mode === "JOIN" &&
+                                                composer.toUserId === team.teamId
+                                                    ? "Applying..."
+                                                    : "Apply to Join"}
+                                            </Button>
+                                        )}
+                                    </Card>
+                                    );
+                                })}
+                                {filteredPeople.map(person => {
+                                    return (
+                                    <Card
+                                        key={`user:${person.id}`}
+                                        className="p-4 flex flex-col gap-4"
+                                        onContextMenu={(event) => openProfileMenu(event, "user", person.userId)}
+                                    >
+                                        <div className="flex items-center gap-4">
+                                            <div
+                                                className="h-12 w-12 rounded-full bg-[var(--card-bg-hover)] border border-[var(--border)] flex items-center justify-center text-[var(--fg)] font-bold text-lg shrink-0"
+                                                aria-label={`${person.username || "user"} avatar`}
+                                            >
+                                                {person.username?.[0] || "?"}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex justify-between items-start">
+                                                    <p className="font-bold text-[var(--fg)] text-base truncate">
+                                                        {person.username}
+                                                    </p>
+                                                    {person.language && (
+                                                        <span className="text-[10px] px-1.5 py-0.5 bg-[var(--card-bg-hover)] rounded border border-[var(--border)] text-[var(--muted)] uppercase">
+                                                            {person.language}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <p className="text-[10px] text-[var(--muted)] mt-0.5">{person.publicCode || "-"}</p>
+                                                <div className="flex flex-wrap gap-1 mt-1">
+                                                    {person.skills && person.skills.length > 0 ? (
+                                                        person.skills.slice(0, 2).map((skill: string) => (
+                                                            <span key={skill} className="text-[10px] text-indigo-700 dark:text-indigo-300 bg-indigo-500/10 px-1.5 rounded">
+                                                                {skill}
+                                                            </span>
+                                                        ))
+                                                    ) : (
+                                                        <span className="text-[10px] text-[var(--muted)] italic">No skills yet</span>
+                                                    )}
+                                                    {person.skills?.length > 2 && <span className="text-[10px] text-[var(--muted)]">+{person.skills.length - 2}</span>}
+                                                </div>
+                                                <p className="text-xs text-[var(--muted)] mt-2 line-clamp-2 min-h-8">
+                                                    {person.bio?.trim() ? person.bio : "No bio yet."}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex justify-between items-center text-xs text-[var(--muted)] border-t border-[var(--border)] pt-3">
+                                            <span>{person.availabilityHours || "Hours not set"} / week</span>
+                                            <div className="flex gap-2">
+                                                {person.canRequestChat !== false ? (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-7 text-xs px-3 text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
+                                                    onClick={() => openChatComposer(person)}
+                                                >
+                                                    Chat
+                                                </Button>
+                                                ) : (
+                                                    <span className="h-7 px-3 inline-flex items-center rounded border border-[var(--border)] text-[10px] font-medium text-[var(--muted)]">
+                                                        {person.chatState === "ACCEPTED" ? "Connected" : "Requested"}
+                                                    </span>
+                                                )}
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-7 text-xs px-3 text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
+                                                    onClick={() => void openInviteComposer(person)}
+                                                >
+                                                    Invite
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </Card>
+                                )})}
+                            </>
+                        )
+                    ) : activeTab === "teams" ? (
+                        filteredTeams.length === 0 ? (
+                            <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-6 text-sm text-[var(--muted)]">
+                                {searchQuery ? "No teams matched your search." : "No teams found."}
+                            </div>
+                        ) : (
+                        filteredTeams.map(team => {
                             return (
                             <Card
                                 key={team.id}
-                                className="p-5 hover:shadow-lg transition-colors cursor-context-menu"
+                                className="p-5 hover:shadow-lg transition-colors"
                                 onContextMenu={(event) => openProfileMenu(event, "team", team.teamId)}
                             >
                                 <div className="flex justify-between items-start mb-3">
@@ -410,13 +597,18 @@ export default function DiscoveryPage() {
                                 )}
                             </Card>
                             );
-                        })
+                        }))
                     ) : (
-                        people.map(person => {
+                        filteredPeople.length === 0 ? (
+                            <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-6 text-sm text-[var(--muted)]">
+                                {searchQuery ? "No people matched your search." : "No people found."}
+                            </div>
+                        ) : (
+                        filteredPeople.map(person => {
                             return (
                             <Card
                                 key={person.id}
-                                className="p-4 flex flex-col gap-4 cursor-context-menu"
+                                className="p-4 flex flex-col gap-4"
                                 onContextMenu={(event) => openProfileMenu(event, "user", person.userId)}
                             >
                                 <div className="flex items-center gap-4">
@@ -437,6 +629,7 @@ export default function DiscoveryPage() {
                                                 </span>
                                             )}
                                         </div>
+                                        <p className="text-[10px] text-[var(--muted)] mt-0.5">{person.publicCode || "-"}</p>
                                         <div className="flex flex-wrap gap-1 mt-1">
                                             {person.skills && person.skills.length > 0 ? (
                                                 person.skills.slice(0, 2).map((skill: string) => (
@@ -459,21 +652,31 @@ export default function DiscoveryPage() {
                                     <span>{person.availabilityHours || "Hours not set"} / week</span>
                                     <div className="flex gap-2">
                                         {person.canRequestChat !== false ? (
-                                            <Button size="sm" variant="outline" className="h-7 text-xs px-3" onClick={() => openChatComposer(person)}>
-                                                Chat
-                                            </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="h-7 text-xs px-3 text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
+                                            onClick={() => openChatComposer(person)}
+                                        >
+                                            Chat
+                                        </Button>
                                         ) : (
                                             <span className="h-7 px-3 inline-flex items-center rounded border border-[var(--border)] text-[10px] font-medium text-[var(--muted)]">
                                                 {person.chatState === "ACCEPTED" ? "Connected" : "Requested"}
                                             </span>
                                         )}
-                                        <Button size="sm" variant="outline" className="h-7 text-xs px-3" onClick={() => void openInviteComposer(person)}>
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="h-7 text-xs px-3 text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
+                                            onClick={() => void openInviteComposer(person)}
+                                        >
                                             Invite
                                         </Button>
                                     </div>
                                 </div>
                             </Card>
-                        )})
+                        )}))
                     )
                 }
             </div>
