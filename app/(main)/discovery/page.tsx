@@ -4,6 +4,8 @@ interface DiscoveryPageProps {
     searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function DiscoveryPage({ searchParams }: DiscoveryPageProps) {
     const resolvedSearchParams = (await searchParams) ?? {};
     const rawQuery = resolvedSearchParams.q;
