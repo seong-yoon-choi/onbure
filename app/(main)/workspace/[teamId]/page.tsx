@@ -3607,11 +3607,12 @@ export default function WorkspacePage() {
         const canRemoveFromWorkspace = selectedCanvasItemKeys.length > 0;
         if (!canCreateGroup && !canCreateAnnotation && !canRemoveFromWorkspace) return;
 
-        const menuWidth = 164;
+        const menuWidth = 148;
+        const menuRowHeight = 34;
         const menuHeight =
-            (canCreateGroup ? 44 : 0) +
-            (canCreateAnnotation ? 44 : 0) +
-            (canRemoveFromWorkspace ? 44 : 0);
+            (canCreateGroup ? menuRowHeight : 0) +
+            (canCreateAnnotation ? menuRowHeight : 0) +
+            (canRemoveFromWorkspace ? menuRowHeight : 0);
         const gap = 8;
         const x = Math.min(Math.max(clientX, gap), window.innerWidth - menuWidth - gap);
         const y = Math.min(Math.max(clientY, gap), window.innerHeight - menuHeight - gap);
@@ -6584,32 +6585,32 @@ export default function WorkspacePage() {
             {workspaceCanvasMenu && (
                 <div
                     data-workspace-canvas-context-menu="true"
-                    className="fixed z-[73] min-w-[154px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
+                    className="fixed z-[73] min-w-[138px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
                     style={{ left: `${workspaceCanvasMenu.x}px`, top: `${workspaceCanvasMenu.y}px` }}
                     onMouseDown={(event) => event.stopPropagation()}
                 >
                     {workspaceMode === "my" && selectedCanvasItemKeys.length > 0 && (
                         <button
                             type="button"
-                            className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                            className="w-full whitespace-nowrap px-2.5 py-1.5 text-left text-xs text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                             onClick={createWorkspaceGroupFromSelection}
                         >
-                            그룹 만들기
+                            그룹 만들기 ({selectedCanvasItemKeys.length})
                         </button>
                     )}
                     {selectedCanvasItemKeys.length > 0 && (
                         <button
                             type="button"
-                            className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
+                            className="w-full whitespace-nowrap px-2.5 py-1.5 text-left text-xs text-rose-500 hover:bg-[var(--card-bg-hover)]"
                             onClick={removeSelectedCanvasItemsFromWorkspace}
                         >
-                            워크스페이스에서 지우기
+                            워크스페이스에서 지우기 ({selectedCanvasItemKeys.length})
                         </button>
                     )}
                     {workspaceCanvasMenu.mode !== "groupOnly" && (
                         <button
                             type="button"
-                            className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                            className="w-full whitespace-nowrap px-2.5 py-1.5 text-left text-xs text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                             onClick={() => createWorkspaceAnnotation()}
                         >
                             {annotationActionLabel}
