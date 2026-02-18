@@ -38,6 +38,22 @@ const requestsCache =
     globalThis.__onbureRequestsCache ||
     (globalThis.__onbureRequestsCache = new Map<string, RequestsCacheEntry>());
 
+function unauthorizedResponse() {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+
+async function resolveAuthenticatedUserId() {
+    try {
+        const session = await getServerSession(authOptions);
+        const userId = String((session?.user as { id?: string } | undefined)?.id || "").trim();
+        if (!session || !userId) return null;
+        return userId;
+    } catch (error) {
+        console.error("Failed to resolve session in /api/requests", error);
+        return null;
+    }
+}
+
 function isNotionRateLimitedError(error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     return message.includes("Notion API Error [429]") || message.includes("\"code\":\"rate_limited\"");
@@ -102,9 +118,8 @@ async function findAuthorizedRequestForUpdate(
 }
 
 export async function GET() {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const userId = String((session.user as { id?: string } | undefined)?.id || "");
+    const userId = await resolveAuthenticatedUserId();
+    if (!userId) return unauthorizedResponse();
     const now = Date.now();
     const cached = requestsCache.get(userId);
 
@@ -181,10 +196,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const userId = String((session.user as { id?: string } | undefined)?.id || "");
-    if (!userId.trim()) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const userId = await resolveAuthenticatedUserId();
+    if (!userId) return unauthorizedResponse();
 
     try {
         const body = await req.json().catch(() => null);
@@ -333,8 +346,8 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const currentUserId = await resolveAuthenticatedUserId();
+    if (!currentUserId) return unauthorizedResponse();
 
     try {
         const body = await req.json().catch(() => null);
@@ -357,10 +370,6 @@ export async function PUT(req: Request) {
             return NextResponse.json({ error: "Invalid request status." }, { status: 400 });
         }
 
-        const currentUserId = String((session.user as { id?: string } | undefined)?.id || "").trim();
-        if (!currentUserId) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
         const authorizedRequest = await findAuthorizedRequestForUpdate(type, currentUserId, id);
         if (!authorizedRequest) {
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
