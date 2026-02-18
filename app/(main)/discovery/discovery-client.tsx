@@ -55,8 +55,14 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
         error: "",
     });
 
+    const normalizeSearchValue = (value: unknown) =>
+        String(value || "")
+            .trim()
+            .replace(/\s+/g, " ")
+            .toLowerCase();
+
     const searchQuery = useMemo(() => initialSearchQuery.trim(), [initialSearchQuery]);
-    const normalizedSearchQuery = searchQuery.toLowerCase();
+    const normalizedSearchQuery = normalizeSearchValue(searchQuery);
     const isSearching = normalizedSearchQuery.length > 0;
 
     const normalizeShortMessage = (value: string, fallback: string) => {
@@ -352,8 +358,8 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                 ...(Array.isArray(team?.recruitingRoles) ? team.recruitingRoles : []),
             ]
                 .filter(Boolean)
-                .map((value) => String(value).toLowerCase());
-            return candidates.some((value) => value.includes(normalizedSearchQuery));
+                .map((value) => normalizeSearchValue(value));
+            return candidates.some((value) => value === normalizedSearchQuery);
         });
     }, [teams, normalizedSearchQuery]);
 
@@ -370,8 +376,8 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                 ...(Array.isArray(person?.skills) ? person.skills : []),
             ]
                 .filter(Boolean)
-                .map((value) => String(value).toLowerCase());
-            return candidates.some((value) => value.includes(normalizedSearchQuery));
+                .map((value) => normalizeSearchValue(value));
+            return candidates.some((value) => value === normalizedSearchQuery);
         });
     }, [people, normalizedSearchQuery]);
 
