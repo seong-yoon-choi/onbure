@@ -792,7 +792,7 @@ export default function WorkspacePage() {
         workspaceMode === "my" ? myHiddenCanvasItemsStorageKey : teamHiddenCanvasItemsStorageKey;
     const annotationKindForMode: WorkspaceAnnotationKind = workspaceMode === "my" ? "memo" : "comment";
     const annotationActionLabel = workspaceMode === "my" ? "메모 생성" : "코멘트 남기기";
-    const workspaceFileScope = workspaceMode === "my" ? "my" : "team";
+    const sidebarFileScope = "my";
 
     const fetchData = React.useCallback(async (options?: { silent?: boolean }) => {
         if (!teamId) return;
@@ -1366,7 +1366,8 @@ export default function WorkspacePage() {
         window.localStorage.setItem(activeHiddenCanvasItemsStorageKey, JSON.stringify(hiddenCanvasItemKeys));
     }, [hiddenCanvasItemKeys, activeHiddenCanvasItemsStorageKey]);
 
-    const currentFiles = useMemo(
+    const currentFiles = useMemo(() => data?.myFiles || [], [data?.myFiles]);
+    const modeCanvasFiles = useMemo(
         () => (workspaceMode === "my" ? data?.myFiles || [] : data?.files || []),
         [workspaceMode, data?.myFiles, data?.files]
     );
@@ -1380,7 +1381,7 @@ export default function WorkspacePage() {
 
         for (const [filePlacementId, position] of Object.entries(canvasFilePositions)) {
             const fileId = extractCanvasPlacementSourceId(filePlacementId);
-            const file = currentFiles.find((item) => item.id === fileId);
+            const file = modeCanvasFiles.find((item) => item.id === fileId);
             if (!file) continue;
             next.push({
                 key: buildCanvasItemKey("file", filePlacementId),
@@ -1444,7 +1445,7 @@ export default function WorkspacePage() {
         return next;
     }, [
         canvasFilePositions,
-        currentFiles,
+        modeCanvasFiles,
         canvasMemberPositions,
         members,
         annotationsForCurrentMode,
@@ -1654,9 +1655,24 @@ export default function WorkspacePage() {
             }),
         [currentFiles, validFolderIds]
     );
+    const canvasFolderIds = useMemo(
+        () => new Set(modeCanvasFiles.filter((file) => isFolderEntry(file)).map((file) => file.id)),
+        [modeCanvasFiles]
+    );
+    const canvasFilesByFolder = useMemo(() => {
+        const grouped: Record<string, WorkspaceFile[]> = {};
+        for (const file of modeCanvasFiles) {
+            if (isFolderEntry(file)) continue;
+            const targetFolderId = String(file.folderId || "").trim();
+            if (!targetFolderId || !canvasFolderIds.has(targetFolderId)) continue;
+            if (!grouped[targetFolderId]) grouped[targetFolderId] = [];
+            grouped[targetFolderId].push(file);
+        }
+        return grouped;
+    }, [modeCanvasFiles, canvasFolderIds]);
 
     useEffect(() => {
-        const validFileIds = new Set(currentFiles.map((file) => file.id));
+        const validFileIds = new Set(modeCanvasFiles.map((file) => file.id));
 
         setCanvasFilePositions((prev) => {
             let changed = false;
@@ -1671,7 +1687,7 @@ export default function WorkspacePage() {
             }
             return changed ? next : prev;
         });
-    }, [currentFiles]);
+    }, [modeCanvasFiles]);
 
     useEffect(() => {
         const validFileIds = new Set(currentFiles.map((file) => file.id));
@@ -1729,7 +1745,7 @@ export default function WorkspacePage() {
             let changed = false;
             const next: Record<string, boolean> = {};
             for (const [folderId, isOpen] of Object.entries(prev)) {
-                if (!validFolderIds.has(folderId)) {
+                if (!canvasFolderIds.has(folderId)) {
                     changed = true;
                     continue;
                 }
@@ -1737,7 +1753,7 @@ export default function WorkspacePage() {
             }
             return changed ? next : prev;
         });
-    }, [validFolderIds]);
+    }, [canvasFolderIds]);
 
     useEffect(() => {
         const validKeys = new Set<string>();
@@ -2312,7 +2328,7 @@ export default function WorkspacePage() {
                 type: "FILE",
                 title: normalizedTitle,
                 url: String(url || ""),
-                scope: workspaceFileScope,
+                scope: sidebarFileScope,
             }),
         });
         if (!res.ok) return null;
@@ -2328,7 +2344,7 @@ export default function WorkspacePage() {
         if (!teamId) return false;
         const form = new FormData();
         form.append("file", file);
-        form.append("scope", workspaceFileScope);
+        form.append("scope", sidebarFileScope);
         if (folderId) {
             form.append("folderId", folderId);
         }
@@ -2648,7 +2664,7 @@ export default function WorkspacePage() {
                     type: "FILE_FOLDER",
                     id: fileId,
                     folderId: normalizedFolderId,
-                    scope: workspaceFileScope,
+                    scope: sidebarFileScope,
                 }),
             });
 
@@ -2672,19 +2688,9 @@ export default function WorkspacePage() {
 
             setData((prev) => {
                 if (!prev) return prev;
-                if (workspaceMode === "my") {
-                    return {
-                        ...prev,
-                        myFiles: (prev.myFiles || []).map((file) =>
-                            file.id === fileId
-                                ? { ...file, folderId: normalizedFolderId || undefined }
-                                : file
-                        ),
-                    };
-                }
                 return {
                     ...prev,
-                    files: prev.files.map((file) =>
+                    myFiles: (prev.myFiles || []).map((file) =>
                         file.id === fileId
                             ? { ...file, folderId: normalizedFolderId || undefined }
                             : file
@@ -2715,7 +2721,7 @@ export default function WorkspacePage() {
                     type: "FILE_RENAME",
                     id: fileId,
                     title: normalizedTitle,
-                    scope: workspaceFileScope,
+                    scope: sidebarFileScope,
                 }),
             });
 
@@ -2723,17 +2729,9 @@ export default function WorkspacePage() {
 
             setData((prev) => {
                 if (!prev) return prev;
-                if (workspaceMode === "my") {
-                    return {
-                        ...prev,
-                        myFiles: (prev.myFiles || []).map((file) =>
-                            file.id === fileId ? { ...file, title: normalizedTitle } : file
-                        ),
-                    };
-                }
                 return {
                     ...prev,
-                    files: prev.files.map((file) =>
+                    myFiles: (prev.myFiles || []).map((file) =>
                         file.id === fileId ? { ...file, title: normalizedTitle } : file
                     ),
                 };
@@ -4309,7 +4307,7 @@ export default function WorkspacePage() {
         }
 
         const sourceFileId = extractCanvasPlacementSourceId(fileId);
-        const targetFile = currentFiles.find((file) => file.id === sourceFileId);
+        const targetFile = modeCanvasFiles.find((file) => file.id === sourceFileId);
         const canSendFileFromMenu = Boolean(
             workspaceMode === "my" &&
                 targetFile &&
@@ -4716,7 +4714,7 @@ export default function WorkspacePage() {
             const res = await fetch(`/api/workspace/${teamId}`, {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: "FILE", id: targetFileId, scope: workspaceFileScope }),
+                body: JSON.stringify({ type: "FILE", id: targetFileId, scope: sidebarFileScope }),
             });
 
             if (!res.ok) {
@@ -4801,7 +4799,7 @@ export default function WorkspacePage() {
     const openFileShareFromCanvasMenu = (toUserId: string) => {
         if (!canvasFileItemMenu) return;
         const sourceFileId = extractCanvasPlacementSourceId(canvasFileItemMenu.fileId);
-        const targetFile = currentFiles.find((file) => file.id === sourceFileId);
+        const targetFile = modeCanvasFiles.find((file) => file.id === sourceFileId);
         setCanvasFileItemMenu(null);
         if (!targetFile || workspaceMode !== "my") return;
         openFileShareConfirm(targetFile, toUserId);
@@ -5000,7 +4998,7 @@ export default function WorkspacePage() {
             const itemKey = buildCanvasItemKey("file", placementId);
             if (hiddenCanvasItemKeySet.has(itemKey)) return null;
             const sourceFileId = extractCanvasPlacementSourceId(placementId);
-            const file = currentFiles.find((item) => item.id === sourceFileId);
+            const file = modeCanvasFiles.find((item) => item.id === sourceFileId);
             if (!file) return null;
             return { placementId, sourceFileId, file, position };
         })
@@ -5029,7 +5027,7 @@ export default function WorkspacePage() {
         ? extractCanvasPlacementSourceId(canvasFileItemMenu.fileId)
         : "";
     const canvasFileMenuTarget = canvasFileMenuSourceId
-        ? currentFiles.find((file) => file.id === canvasFileMenuSourceId) || null
+        ? modeCanvasFiles.find((file) => file.id === canvasFileMenuSourceId) || null
         : null;
     const canSendFileFromSidebarMenu = Boolean(
         workspaceMode === "my" &&
@@ -5842,7 +5840,7 @@ export default function WorkspacePage() {
                     {placedFiles.map(({ placementId, file, position }) => {
                         const isFolder = isFolderEntry(file);
                         const isFolderOpen = isFolder && Boolean(openCanvasFolders[file.id]);
-                        const folderChildren = isFolder ? filesByFolder[file.id] || [] : [];
+                        const folderChildren = isFolder ? canvasFilesByFolder[file.id] || [] : [];
                         const displayTitle = isFolder ? getFolderDisplayName(file.title) : file.title;
                         const fileItemKey = buildCanvasItemKey("file", placementId);
                         const isSelected = selectedCanvasItemKeySet.has(fileItemKey);

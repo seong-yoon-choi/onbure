@@ -253,17 +253,43 @@ export async function deleteFile(teamId: string, fileId: string, options?: Works
                 ? `&scope=eq.user&owner_user_id=eq.${encodeURIComponent(ownerUserId)}`
                 : "";
         const targetRows = (await supabaseRest(
-            `/workspace_files?select=url&team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}${ownerFilter}&limit=1`
-        )) as Array<{ url: string | null }>;
-        const targetUrl = String(targetRows[0]?.url || "").trim();
-        if (parseSupabaseStoragePointer(targetUrl)) {
+            `/workspace_files?select=file_id,title,url&team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}${ownerFilter}&limit=1`
+        )) as Array<{ file_id: string; title: string | null; url: string | null }>;
+        const target = targetRows[0];
+        if (!target) return;
+
+        const deleteStoragePointerIfNeeded = async (rawUrl: string | null | undefined) => {
+            const url = String(rawUrl || "").trim();
+            if (!parseSupabaseStoragePointer(url)) return;
             try {
-                await deleteStorageObjectFromPointer(targetUrl);
+                await deleteStorageObjectFromPointer(url);
             } catch {
                 // Continue DB deletion even if storage cleanup fails.
             }
+        };
+
+        const targetTitle = String(target.title || "").trim();
+        const isFolder = targetTitle.startsWith("Folder: ");
+
+        if (isFolder) {
+            const childRows = (await supabaseRest(
+                `/workspace_files?select=file_id,url&team_id=eq.${encodeURIComponent(teamId)}&folder_id=eq.${encodeURIComponent(fileId)}${ownerFilter}`
+            )) as Array<{ file_id: string; url: string | null }>;
+
+            for (const child of childRows) {
+                await deleteStoragePointerIfNeeded(child.url);
+            }
+
+            await supabaseRest(
+                `/workspace_files?team_id=eq.${encodeURIComponent(teamId)}&folder_id=eq.${encodeURIComponent(fileId)}${ownerFilter}`,
+                {
+                    method: "DELETE",
+                    prefer: "return=minimal",
+                }
+            );
         }
 
+        await deleteStoragePointerIfNeeded(target.url);
         await supabaseRest(
             `/workspace_files?team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}${ownerFilter}`,
             {
