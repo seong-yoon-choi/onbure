@@ -7,7 +7,3 @@ export function getDataBackend(): DataBackend {
 export function isSupabaseBackend() {
     return true;
 }
-
-export function isNotionBackend() {
-    return false;
-}

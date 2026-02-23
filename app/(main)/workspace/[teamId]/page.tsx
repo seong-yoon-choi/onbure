@@ -1,10 +1,10 @@
-﻿"use client";
+"use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { AlertModal, ConfirmModal } from "@/components/ui/modal";
+import { AlertModal, ConfirmModal, ModalShell } from "@/components/ui/modal";
 import {
     Boxes,
     ChevronLeft,
@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuditRealtime } from "@/lib/realtime/use-audit-realtime";
+import { trackUxClick } from "@/lib/ux/client";
 
 interface WorkspaceTeam {
     name: string;
@@ -259,6 +260,7 @@ interface WorkspaceCanvasMenuState {
     canvasX: number;
     canvasY: number;
     mode?: "default" | "groupOnly";
+    moveSubmenuLeft?: boolean;
 }
 
 type WorkspaceAnnotationKind = "comment" | "memo";
@@ -352,7 +354,7 @@ const CANVAS_PADDING = 16;
 const CANVAS_COMMENT_PREVIEW_WIDTH = 224;
 const CANVAS_COMMENT_PREVIEW_HEIGHT = 44;
 const CANVAS_PLACEMENT_SEPARATOR = "::";
-const GROUP_HINT_TOOLTIP_TEXT = "ctrl을 누르고 아이템을 드래그 하세요";
+const GROUP_HINT_TOOLTIP_TEXT = "Hold Ctrl and drag items to a group.";
 
 function buildCanvasItemKey(kind: WorkspaceGroupItemKind, id: string) {
     return `${kind}:${id}`;
@@ -416,7 +418,7 @@ function getMemberCardWidth(name: string): number {
 }
 
 function getDefaultAnnotationTitle(kind: WorkspaceAnnotationKind): string {
-    return kind === "comment" ? "코멘트" : "메모";
+    return kind === "comment" ? "Comment" : "Memo";
 }
 
 function isFolderEntry(file: WorkspaceFile) {
@@ -717,6 +719,10 @@ export default function WorkspacePage() {
     const groupInlineRenameInputRef = useRef<HTMLInputElement | null>(null);
     const annotationEditorRef = useRef<HTMLTextAreaElement | null>(null);
     const annotationTitleInputRef = useRef<HTMLInputElement | null>(null);
+    const createEntryDialogTitleId = useId();
+    const createEntryInputId = useId();
+    const moveFileDialogTitleId = useId();
+    const moveFileSelectId = useId();
     const filesSidebarSelectionRef = useRef<HTMLDivElement | null>(null);
     const groupsSidebarSelectionRef = useRef<HTMLDivElement | null>(null);
     const fileLayoutLoadedKeyRef = useRef<string | null>(null);
@@ -727,6 +733,16 @@ export default function WorkspacePage() {
     const suppressAnnotationClickIdRef = useRef<string | null>(null);
 
     const viewerUserId = data?.viewerUserId || "unknown";
+    const trackMyTeamAction = (actionKey: string, context?: Record<string, unknown>) => {
+        trackUxClick(actionKey, {
+            page: "workspace",
+            teamId: teamId || "",
+            viewerUserId,
+            workspaceMode,
+            activeSection,
+            ...context,
+        });
+    };
     const modeStorageKey = useMemo(() => `onbure.workspace.mode.${teamId || "unknown"}`, [teamId]);
     const sidebarStorageKey = useMemo(() => `onbure.workspace.sidebar.${teamId || "unknown"}`, [teamId]);
     const teamLayoutStorageKey = useMemo(() => `onbure.workspace.fileLayout.${teamId || "unknown"}`, [teamId]);
@@ -791,7 +807,7 @@ export default function WorkspacePage() {
     const activeHiddenCanvasItemsStorageKey =
         workspaceMode === "my" ? myHiddenCanvasItemsStorageKey : teamHiddenCanvasItemsStorageKey;
     const annotationKindForMode: WorkspaceAnnotationKind = workspaceMode === "my" ? "memo" : "comment";
-    const annotationActionLabel = workspaceMode === "my" ? "메모 생성" : "코멘트 남기기";
+    const annotationActionLabel = workspaceMode === "my" ? "Create Memo" : "Create Comment";
     const sidebarFileScope = "my";
 
     const fetchData = React.useCallback(async (options?: { silent?: boolean }) => {
@@ -1376,7 +1392,19 @@ export default function WorkspacePage() {
         () => annotations.filter((annotation) => annotation.kind === annotationKindForMode),
         [annotations, annotationKindForMode]
     );
-    const selectableCanvasItems = useMemo(() => {
+    const annotationsForSidebarGroups = useMemo(
+        () => annotations.filter((annotation) => annotation.kind === "memo"),
+        [annotations]
+    );
+    const hiddenCanvasGroupIdSet = useMemo(
+        () => new Set(hiddenCanvasGroupIds),
+        [hiddenCanvasGroupIds]
+    );
+    const hiddenCanvasItemKeySet = useMemo(
+        () => new Set(hiddenCanvasItemKeys),
+        [hiddenCanvasItemKeys]
+    );
+    const allCanvasSelectableItems = useMemo(() => {
         const next: CanvasSelectableItem[] = [];
 
         for (const [filePlacementId, position] of Object.entries(canvasFilePositions)) {
@@ -1451,6 +1479,10 @@ export default function WorkspacePage() {
         annotationsForCurrentMode,
         activeAnnotationId,
     ]);
+    const selectableCanvasItems = useMemo(
+        () => allCanvasSelectableItems.filter((item) => !hiddenCanvasItemKeySet.has(item.key)),
+        [allCanvasSelectableItems, hiddenCanvasItemKeySet]
+    );
     const selectableCanvasItemMap = useMemo(
         () => new Map(selectableCanvasItems.map((item) => [item.key, item])),
         [selectableCanvasItems]
@@ -1470,14 +1502,6 @@ export default function WorkspacePage() {
     const groupedItemKeySet = useMemo(
         () => new Set(workspaceGroups.flatMap((group) => group.itemKeys)),
         [workspaceGroups]
-    );
-    const hiddenCanvasGroupIdSet = useMemo(
-        () => new Set(hiddenCanvasGroupIds),
-        [hiddenCanvasGroupIds]
-    );
-    const hiddenCanvasItemKeySet = useMemo(
-        () => new Set(hiddenCanvasItemKeys),
-        [hiddenCanvasItemKeys]
     );
     const resolvedWorkspaceGroups = useMemo(
         () =>
@@ -1532,7 +1556,7 @@ export default function WorkspacePage() {
                             }
 
                             if (parsed.kind === "annotation") {
-                                const annotation = annotationsForCurrentMode.find((item) => item.id === parsed.id);
+                                const annotation = annotationsForSidebarGroups.find((item) => item.id === parsed.id);
                                 if (!annotation) return null;
                                 const isExpanded = activeAnnotationId === annotation.id;
                                 const width = isExpanded
@@ -1568,7 +1592,7 @@ export default function WorkspacePage() {
             selectableCanvasItemMap,
             currentFiles,
             members,
-            annotationsForCurrentMode,
+            annotationsForSidebarGroups,
             activeAnnotationId,
         ]
     );
@@ -1815,11 +1839,12 @@ export default function WorkspacePage() {
     }, [workspaceGroups]);
 
     useEffect(() => {
+        const aliveItemKeys = new Set(allCanvasSelectableItems.map((item) => item.key));
         setHiddenCanvasItemKeys((prev) => {
-            const next = prev.filter((itemKey) => groupedItemKeySet.has(itemKey));
+            const next = prev.filter((itemKey) => aliveItemKeys.has(itemKey));
             return next.length === prev.length ? prev : next;
         });
-    }, [groupedItemKeySet]);
+    }, [allCanvasSelectableItems]);
 
     useEffect(() => {
         setSelectedCanvasItemKeys((prev) => {
@@ -1894,7 +1919,7 @@ export default function WorkspacePage() {
             const normalizedActiveDragKeys = Array.from(
                 new Set(activeDragKeys.filter((itemKey) => selectableCanvasItemMap.has(itemKey)))
             );
-            const isCtrlGroupDrag = canDropToGroup && event.ctrlKey && normalizedActiveDragKeys.length > 0;
+            const isGroupDrag = canDropToGroup && event.ctrlKey && normalizedActiveDragKeys.length > 0;
 
             if (canDropToGroup && event.ctrlKey) {
                 const element = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null;
@@ -1907,7 +1932,7 @@ export default function WorkspacePage() {
                 setHoveredGroupId(null);
             }
 
-            if (isCtrlGroupDrag) {
+            if (isGroupDrag) {
                 const firstItem = selectableCanvasItemMap.get(normalizedActiveDragKeys[0]) || null;
                 const firstKind = firstItem?.kind;
                 const allSameKind =
@@ -2413,7 +2438,7 @@ export default function WorkspacePage() {
                 setNotice({
                     open: true,
                     title: "Popup blocked",
-                    message: "브라우저에서 팝업 허용 후 다시 시도해 주세요.",
+                    message: "Please allow pop-ups in your browser and try again.",
                 });
             }
             return;
@@ -2427,6 +2452,7 @@ export default function WorkspacePage() {
     };
 
     const openCreateEntry = () => {
+        trackMyTeamAction("myteam.create_folder", { source: "canvas_menu" });
         setCanvasMenu(null);
         setFileItemMenu(null);
         setCanvasFileItemMenu(null);
@@ -2445,6 +2471,7 @@ export default function WorkspacePage() {
         if (!fileItemMenu) return;
         const targetFile = currentFiles.find((file) => file.id === fileItemMenu.fileId);
         if (!targetFile || isFolderEntry(targetFile)) return;
+        trackMyTeamAction("myteam.create_folder", { source: "file_menu", fileId: targetFile.id });
 
         setCanvasMenu(null);
         setFileItemMenu(null);
@@ -2520,11 +2547,13 @@ export default function WorkspacePage() {
     };
 
     const triggerImportFiles = () => {
+        trackMyTeamAction("myteam.import_file");
         setCanvasMenu(null);
         importFileInputRef.current?.click();
     };
 
     const triggerImportFolders = () => {
+        trackMyTeamAction("myteam.import_folder");
         setCanvasMenu(null);
         importFolderInputRef.current?.click();
     };
@@ -2887,6 +2916,7 @@ export default function WorkspacePage() {
             event.preventDefault();
             return;
         }
+        trackMyTeamAction("myteam.drag_group", { groupId, source: "sidebar" });
         event.dataTransfer.setData("application/x-onbure-group-id", groupId);
         event.dataTransfer.setData("text/plain", `__onbure_group_id__=${groupId}`);
         event.dataTransfer.effectAllowed = "move";
@@ -3012,6 +3042,7 @@ export default function WorkspacePage() {
     };
 
     const handleFileDragStart = (event: React.DragEvent<HTMLElement>, file: WorkspaceFile) => {
+        trackMyTeamAction("myteam.drag_file", { fileId: file.id });
         event.dataTransfer.setData("application/x-onbure-file-id", file.id);
         event.dataTransfer.setData("text/plain", file.title);
         event.dataTransfer.effectAllowed = "move";
@@ -3085,6 +3116,7 @@ export default function WorkspacePage() {
     };
 
     const handleMemberDragStart = (event: React.DragEvent<HTMLElement>, member: WorkspaceMember) => {
+        trackMyTeamAction("myteam.drag_member", { memberUserId: member.userId });
         event.dataTransfer.setData("application/x-onbure-member-id", member.id);
         event.dataTransfer.setData("text/plain", member.username || member.userId);
         event.dataTransfer.effectAllowed = "move";
@@ -3311,11 +3343,15 @@ export default function WorkspacePage() {
         });
     };
 
-    const handleRemovePlacedMember = (memberPlacementId: string) => {
+    const handleRemovePlacedMember = (
+        memberPlacementId: string,
+        options?: { removeFromGroups?: boolean }
+    ) => {
         const normalizedPlacementId = String(memberPlacementId || "").trim();
         if (!normalizedPlacementId) return;
         const sourceId = extractCanvasPlacementSourceId(normalizedPlacementId);
         const removeBySourceId = sourceId === normalizedPlacementId;
+        const shouldRemoveFromGroups = options?.removeFromGroups ?? removeBySourceId;
         const candidatePlacementIds = removeBySourceId
             ? Object.keys(canvasMemberPositions).filter(
                   (placementId) => extractCanvasPlacementSourceId(placementId) === sourceId
@@ -3361,16 +3397,20 @@ export default function WorkspacePage() {
             return next;
         });
 
-        if (itemKeysToRemove.length > 0) {
+        if (shouldRemoveFromGroups && itemKeysToRemove.length > 0) {
             removeItemKeysFromAllGroups(itemKeysToRemove);
         }
     };
 
-    const handleRemovePlacedFile = (filePlacementOrSourceId: string) => {
+    const handleRemovePlacedFile = (
+        filePlacementOrSourceId: string,
+        options?: { removeFromGroups?: boolean }
+    ) => {
         const normalized = String(filePlacementOrSourceId || "").trim();
         if (!normalized) return;
         const sourceId = extractCanvasPlacementSourceId(normalized);
         const removeBySourceId = sourceId === normalized;
+        const shouldRemoveFromGroups = options?.removeFromGroups ?? removeBySourceId;
         const candidatePlacementIds = removeBySourceId
             ? Object.keys(canvasFilePositions).filter(
                   (placementId) => extractCanvasPlacementSourceId(placementId) === sourceId
@@ -3416,7 +3456,7 @@ export default function WorkspacePage() {
             return next;
         });
 
-        if (itemKeysToRemove.length > 0) {
+        if (shouldRemoveFromGroups && itemKeysToRemove.length > 0) {
             removeItemKeysFromAllGroups(itemKeysToRemove);
         }
     };
@@ -3434,6 +3474,7 @@ export default function WorkspacePage() {
         if (!member.userId) return;
         if (data?.viewerUserId && member.userId === data.viewerUserId) return;
         if (typeof window === "undefined") return;
+        trackMyTeamAction("myteam.member_click", { memberUserId: member.userId, action: "chat" });
 
         window.dispatchEvent(
             new CustomEvent("onbure-open-chat-dm", {
@@ -3505,6 +3546,7 @@ export default function WorkspacePage() {
 
         const targetGroup = resolvedWorkspaceGroups.find((group) => group.id === groupId);
         if (!targetGroup || targetGroup.items.length === 0) return;
+        trackMyTeamAction("myteam.drag_group", { groupId, source: "canvas_outline" });
 
         const anchorItem = targetGroup.items[0];
         if (!anchorItem) return;
@@ -3557,8 +3599,6 @@ export default function WorkspacePage() {
     };
 
     const createWorkspaceGroup = (itemKeys: string[] = []) => {
-        if (workspaceMode !== "my") return null;
-
         const normalizedKeys = Array.from(
             new Set(itemKeys.filter((itemKey) => selectableCanvasItemMap.has(itemKey)))
         );
@@ -3602,13 +3642,14 @@ export default function WorkspacePage() {
         canvasY: number,
         mode: "default" | "groupOnly" = "default"
     ) => {
-        const canCreateGroup = workspaceMode === "my" && selectedCanvasItemKeys.length > 0;
+        const canCreateGroup = selectedCanvasItemKeys.length > 0;
         const canCreateAnnotation = mode !== "groupOnly";
         const canMoveToGroup = selectedCanvasItemKeys.length > 0;
         const canRemoveFromWorkspace = selectedCanvasItemKeys.length > 0;
         if (!canCreateGroup && !canCreateAnnotation && !canMoveToGroup && !canRemoveFromWorkspace) return;
 
         const menuWidth = 186;
+        const moveSubmenuWidth = 188;
         const menuRowHeight = 40;
         const menuHeight =
             (canCreateGroup ? menuRowHeight : 0) +
@@ -3618,6 +3659,8 @@ export default function WorkspacePage() {
         const gap = 8;
         const x = Math.min(Math.max(clientX, gap), window.innerWidth - menuWidth - gap);
         const y = Math.min(Math.max(clientY, gap), window.innerHeight - menuHeight - gap);
+        const moveSubmenuLeft =
+            canMoveToGroup && x + menuWidth + moveSubmenuWidth + gap > window.innerWidth;
 
         setProfileMenu(null);
         setCanvasMenu(null);
@@ -3626,13 +3669,17 @@ export default function WorkspacePage() {
         setAnnotationItemMenu(null);
         setGroupMenu(null);
         setGroupEntryMenu(null);
-        setWorkspaceCanvasMenu({ x, y, canvasX, canvasY, mode });
+        setWorkspaceCanvasMenu({ x, y, canvasX, canvasY, mode, moveSubmenuLeft });
     };
 
     const createWorkspaceGroupFromSelection = () => {
         const selectedKeys = Array.from(
             new Set(selectedCanvasItemKeys.filter((itemKey) => selectableCanvasItemMap.has(itemKey)))
         );
+        trackMyTeamAction("myteam.create_group", {
+            source: "selection",
+            itemCount: selectedKeys.length,
+        });
         createWorkspaceGroup(selectedKeys);
         setSelectedCanvasItemKeys([]);
         setWorkspaceCanvasMenu(null);
@@ -3665,6 +3712,7 @@ export default function WorkspacePage() {
         const filePlacementIds = new Set<string>();
         const memberPlacementIds = new Set<string>();
         const annotationIds = new Set<string>();
+        const groupedAnnotationItemKeysToHide = new Set<string>();
 
         for (const itemKey of selectedKeys) {
             const parsed = parseCanvasItemKey(itemKey);
@@ -3678,12 +3726,20 @@ export default function WorkspacePage() {
                 continue;
             }
             if (parsed.kind === "annotation") {
-                annotationIds.add(parsed.id);
+                if (groupedItemKeySet.has(itemKey)) {
+                    groupedAnnotationItemKeysToHide.add(itemKey);
+                } else {
+                    annotationIds.add(parsed.id);
+                }
             }
         }
 
         filePlacementIds.forEach((placementId) => handleRemovePlacedFile(placementId));
         memberPlacementIds.forEach((placementId) => handleRemovePlacedMember(placementId));
+        if (groupedAnnotationItemKeysToHide.size > 0) {
+            const keys = Array.from(groupedAnnotationItemKeysToHide);
+            setHiddenCanvasItemKeys((prev) => Array.from(new Set([...prev, ...keys])));
+        }
         annotationIds.forEach((annotationId) => removeAnnotationFromWorkspace(annotationId));
 
         setSelectedCanvasItemKeys([]);
@@ -3691,7 +3747,7 @@ export default function WorkspacePage() {
     };
 
     const createEmptyWorkspaceGroupFromSidebar = () => {
-        if (workspaceMode !== "my") return;
+        trackMyTeamAction("myteam.create_group", { source: "sidebar_empty" });
         createWorkspaceGroup([]);
         setGroupMenu(null);
         setGroupEntryMenu(null);
@@ -3795,6 +3851,10 @@ export default function WorkspacePage() {
         );
         if (!groupId || normalizedKeys.length === 0) return;
         const selectedSet = new Set(normalizedKeys);
+
+        // Ensure moved items are visible and the target group outline is shown on canvas.
+        setHiddenCanvasGroupIds((prev) => prev.filter((id) => id !== groupId));
+        setHiddenCanvasItemKeys((prev) => prev.filter((itemKey) => !selectedSet.has(itemKey)));
 
         setWorkspaceGroups((prev) =>
             prev.map((group) => {
@@ -3911,7 +3971,6 @@ export default function WorkspacePage() {
     };
 
     const openGroupsContextMenu = (event: React.MouseEvent) => {
-        if (workspaceMode !== "my") return;
         event.preventDefault();
         event.stopPropagation();
         const menuWidth = 148;
@@ -3993,7 +4052,13 @@ export default function WorkspacePage() {
     const handleRemoveGroupEntryFromMenu = () => {
         if (!groupEntryMenu) return;
         const { groupId, itemKey } = groupEntryMenu;
+        const isVisibleOnCanvas =
+            selectableCanvasItemMap.has(itemKey) && !hiddenCanvasItemKeySet.has(itemKey);
         setGroupEntryMenu(null);
+        setSelectedCanvasItemKeys((prev) => prev.filter((candidate) => candidate !== itemKey));
+        if (!isVisibleOnCanvas) {
+            setHiddenCanvasItemKeys((prev) => (prev.includes(itemKey) ? prev : [...prev, itemKey]));
+        }
         setWorkspaceGroups((prev) =>
             prev.map((group) =>
                 group.id === groupId
@@ -4193,6 +4258,10 @@ export default function WorkspacePage() {
         const targetGroup = workspaceGroups.find((group) => group.id === targetGroupId);
         const targetItemKeys = targetGroup?.itemKeys || [];
         setGroupMenu(null);
+        if (targetItemKeys.length > 0) {
+            const targetSet = new Set(targetItemKeys);
+            setSelectedCanvasItemKeys((prev) => prev.filter((itemKey) => !targetSet.has(itemKey)));
+        }
         setHiddenCanvasGroupIds((prev) =>
             prev.includes(targetGroupId) ? prev : [...prev, targetGroupId]
         );
@@ -4237,6 +4306,7 @@ export default function WorkspacePage() {
         setHoveredGroupId(null);
         if (!event.ctrlKey) return;
         if (!keys.length) return;
+        trackMyTeamAction("myteam.ctrl_drag_add_to_group", { groupId, itemCount: keys.length });
         triggerGroupDropAnimation(keys, groupId, {
             originClientX: event.clientX,
             originClientY: event.clientY,
@@ -4481,6 +4551,7 @@ export default function WorkspacePage() {
     const createWorkspaceAnnotation = () => {
         if (!workspaceCanvasMenu) return;
         const kind = annotationKindForMode;
+        trackMyTeamAction(kind === "memo" ? "myteam.create_memo" : "myteam.create_comment");
         const membersForAuthor = Array.isArray(data?.members) ? data.members : [];
         const authorUserId = String(data?.viewerUserId || "");
         const authorName =
@@ -4566,6 +4637,7 @@ export default function WorkspacePage() {
         options?: { canvasItemKey?: string }
     ) => {
         if (!memberUserId) return;
+        trackMyTeamAction("myteam.member_click", { memberUserId, action: "context_menu" });
         event.preventDefault();
         event.stopPropagation();
 
@@ -4668,8 +4740,18 @@ export default function WorkspacePage() {
                 let placement: CanvasPosition = { x: CANVAS_PADDING, y: CANVAS_PADDING };
                 if (canvas) {
                     const rect = canvas.getBoundingClientRect();
-                    const rawX = x - rect.left - memberWidth / 2;
-                    const rawY = y - rect.top - CANVAS_MEMBER_HEIGHT / 2;
+                    const targetGroup = resolvedWorkspaceGroups.find((group) => group.id === targetGroupId);
+                    const anchorItem = targetGroup?.items.find((candidate) =>
+                        selectableCanvasItemMap.has(candidate.key)
+                    );
+                    const rawX =
+                        anchorItem
+                            ? anchorItem.bounds.x + Math.min(24, Math.max(8, anchorItem.bounds.width - memberWidth))
+                            : x - rect.left - memberWidth / 2;
+                    const rawY =
+                        anchorItem
+                            ? anchorItem.bounds.y + Math.max(12, CANVAS_MEMBER_HEIGHT / 4)
+                            : y - rect.top - CANVAS_MEMBER_HEIGHT / 2;
                     placement = clampToCanvas(
                         { x: rawX, y: rawY },
                         rect.width,
@@ -4698,6 +4780,7 @@ export default function WorkspacePage() {
         }
 
         moveCanvasItemsToGroup(targetGroupId, [nextItemKey], { skipCanvasPresenceCheck: true });
+        setSelectedCanvasItemKeys([nextItemKey]);
     };
 
     const removeProfileItemFromGroupsFromMenu = () => {
@@ -4815,7 +4898,7 @@ export default function WorkspacePage() {
                 title: "Delete failed",
                 message:
                     successCount > 0
-                        ? `${successCount}개 지웠고, ${failedCount}개는 지우지 못했습니다.`
+                        ? `Deleted ${successCount} item(s); ${failedCount} item(s) could not be deleted.`
                         : "Unable to delete this item.",
             });
             return;
@@ -4824,8 +4907,8 @@ export default function WorkspacePage() {
         if (targetFileIds.length > 1) {
             setNotice({
                 open: true,
-                title: "삭제 완료",
-                message: `${successCount}개 파일을 모두 지웠습니다.`,
+                title: "Delete complete",
+                message: `Deleted ${successCount} file(s).`,
             });
         }
     };
@@ -4937,8 +5020,8 @@ export default function WorkspacePage() {
                 });
                 setNotice({
                     open: true,
-                    title: "파일 전송 완료",
-                    message: `${fileShareConfirm.toUsername}님에게 파일 요청을 보냈습니다.`,
+                    title: "File request sent",
+                    message: `Sent a file request to ${fileShareConfirm.toUsername}.`,
                 });
                 return;
             }
@@ -4954,15 +5037,15 @@ export default function WorkspacePage() {
 
             setNotice({
                 open: true,
-                title: "파일 전송 실패",
-                message: String(payload?.error || "파일 전송 요청을 보낼 수 없습니다."),
+                title: "File request failed",
+                message: String(payload?.error || "Unable to send the file request."),
             });
             setFileShareConfirm((prev) => ({ ...prev, isSubmitting: false }));
         } catch {
             setNotice({
                 open: true,
-                title: "파일 전송 실패",
-                message: "파일 전송 요청을 보낼 수 없습니다.",
+                title: "File request failed",
+                message: "Unable to send the file request.",
             });
             setFileShareConfirm((prev) => ({ ...prev, isSubmitting: false }));
         }
@@ -5037,6 +5120,7 @@ export default function WorkspacePage() {
                     ),
                 };
             });
+            trackMyTeamAction("myteam.change_member_role", { targetUserId, nextRole });
             setRoleChangeConfirm((prev) => ({ ...prev, open: false, isSubmitting: false }));
         } catch {
             setNotice({
@@ -5251,7 +5335,7 @@ export default function WorkspacePage() {
                     )}
                     {currentFiles.length === 0 ? (
                         <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-[var(--muted)]">
-                            우클릭을 해서 파일을 만들어 보세요
+                            Right-click to create a file.
                         </p>
                     ) : (
                         <div className="max-h-[66vh] space-y-1 overflow-auto pr-1">
@@ -5379,29 +5463,54 @@ export default function WorkspacePage() {
 
         if (activeSection === "groups") {
             return (
-                <div
-                    ref={groupsSidebarSelectionRef}
-                    className="relative min-h-[56vh] flex-1"
-                    onContextMenu={openGroupsContextMenu}
-                    onPointerDown={(event) => handleSidebarSelectionPointerDown("groups", event)}
-                >
-                    {sidebarSelection?.section === "groups" && sidebarSelectionBounds && (
-                        <div
-                            className="pointer-events-none absolute z-20 rounded-sm border border-[var(--primary)]/70 bg-[var(--primary)]/15"
-                            style={{
-                                left: sidebarSelectionBounds.x,
-                                top: sidebarSelectionBounds.y,
-                                width: sidebarSelectionBounds.width,
-                                height: sidebarSelectionBounds.height,
+                <div className="flex h-full min-h-0 flex-col">
+                    <div className="mb-2 flex items-center justify-between gap-2 px-1">
+                        <p className="text-[11px] font-medium text-[var(--muted)]">Groups</p>
+                        <button
+                            type="button"
+                            className="inline-flex items-center rounded-md border border-[var(--border)] px-2 py-1 text-[11px] font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--card-bg-hover)]"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                createEmptyWorkspaceGroupFromSidebar();
                             }}
-                        />
-                    )}
-                    {resolvedWorkspaceGroups.length === 0 ? (
-                        <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-[var(--muted)]">
-                            {workspaceMode === "my" ? "우클릭으로 그룹을 만들어보세요" : "그룹이 없습니다."}
-                        </p>
-                    ) : (
-                        <div className="max-h-[66vh] space-y-1 overflow-auto pr-1">
+                        >
+                            + Create Group
+                        </button>
+                    </div>
+                    <div
+                        ref={groupsSidebarSelectionRef}
+                        className="relative min-h-[52vh] flex-1"
+                        onContextMenu={openGroupsContextMenu}
+                        onPointerDown={(event) => handleSidebarSelectionPointerDown("groups", event)}
+                    >
+                        {sidebarSelection?.section === "groups" && sidebarSelectionBounds && (
+                            <div
+                                className="pointer-events-none absolute z-20 rounded-sm border border-[var(--primary)]/70 bg-[var(--primary)]/15"
+                                style={{
+                                    left: sidebarSelectionBounds.x,
+                                    top: sidebarSelectionBounds.y,
+                                    width: sidebarSelectionBounds.width,
+                                    height: sidebarSelectionBounds.height,
+                                }}
+                            />
+                        )}
+                        {resolvedWorkspaceGroups.length === 0 ? (
+                            <div className="absolute inset-0 flex items-center justify-center px-4">
+                                <button
+                                    type="button"
+                                    className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm font-medium text-[var(--fg)] transition-colors hover:bg-[var(--card-bg-hover)]"
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        createEmptyWorkspaceGroupFromSidebar();
+                                    }}
+                                >
+                                    Create Group
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="max-h-[66vh] space-y-1 overflow-auto pr-1">
                             {resolvedWorkspaceGroups.map((group) => {
                                 const isClosed = Boolean(closedGroups[group.id]);
                                 const isDropHover = hoveredGroupId === group.id;
@@ -5520,7 +5629,7 @@ export default function WorkspacePage() {
                                         )}
                                         {isDropHover && (
                                             <p className="pl-7 text-[10px] font-medium text-[var(--primary)]">
-                                                Ctrl + Drop items here
+                                                Hold Ctrl and drop items here
                                             </p>
                                         )}
                                         {!isClosed && (
@@ -5663,8 +5772,9 @@ export default function WorkspacePage() {
                                     </div>
                                 );
                             })}
-                        </div>
-                    )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             );
         }
@@ -5768,7 +5878,10 @@ export default function WorkspacePage() {
                                 <div className="flex flex-col gap-1">
                                     <button
                                         type="button"
-                                        onClick={() => setActiveSection("members")}
+                                        onClick={() => {
+                                            trackMyTeamAction("myteam.open_members_panel");
+                                            setActiveSection("members");
+                                        }}
                                         className={cn(
                                             "inline-flex h-9 w-full items-center justify-center rounded-md border transition-colors",
                                             activeSection === "members"
@@ -5782,7 +5895,10 @@ export default function WorkspacePage() {
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={() => setActiveSection("files")}
+                                        onClick={() => {
+                                            trackMyTeamAction("myteam.open_files_panel");
+                                            setActiveSection("files");
+                                        }}
                                         className={cn(
                                             "inline-flex h-9 w-full items-center justify-center rounded-md border transition-colors",
                                             activeSection === "files"
@@ -5796,7 +5912,10 @@ export default function WorkspacePage() {
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={() => setActiveSection("groups")}
+                                        onClick={() => {
+                                            trackMyTeamAction("myteam.open_groups_panel");
+                                            setActiveSection("groups");
+                                        }}
                                         className={cn(
                                             "inline-flex h-9 w-full items-center justify-center rounded-md border transition-colors",
                                             activeSection === "groups"
@@ -5820,39 +5939,13 @@ export default function WorkspacePage() {
                                     >
                                         {team.name}
                                     </button>
-                                    <div className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--card-bg)] p-0.5">
-                                        <button
-                                            type="button"
-                                            onClick={() => setWorkspaceMode("my")}
-                                            className={cn(
-                                                "h-7 rounded px-2.5 text-[11px] font-semibold transition-colors",
-                                                workspaceMode === "my"
-                                                    ? "bg-[var(--primary)] text-white"
-                                                    : "text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                                            )}
-                                        >
-                                            My
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setWorkspaceMode("team")}
-                                            className={cn(
-                                                "h-7 rounded px-2.5 text-[11px] font-semibold transition-colors",
-                                                workspaceMode === "team"
-                                                    ? "bg-[var(--primary)] text-white"
-                                                    : "text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                                            )}
-                                        >
-                                            Team
-                                        </button>
-                                    </div>
                                 </div>
                                 <p className="text-xs text-[var(--muted)]">
                                     {activeSection === "members"
-                                        ? "Members"
+                                        ? "My Members"
                                         : activeSection === "files"
-                                            ? "Files"
-                                            : "Groups"}
+                                            ? "My Files"
+                                            : "My Groups"}
                                 </p>
                                 <div className="mt-3 pt-3 border-t border-[var(--border)] flex-1 overflow-auto">
                                     {renderSidebarContent()}
@@ -5878,6 +5971,48 @@ export default function WorkspacePage() {
             </button>
 
             <section className="relative flex-1 min-w-0 min-h-0 flex flex-col">
+                <div className="shrink-0 border-b border-[var(--border)] bg-[var(--card-bg)]/80 px-4 py-2 backdrop-blur-sm">
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-[var(--fg)]">Workspace Canvas</p>
+                            <p className="truncate text-[11px] text-[var(--muted)]">
+                                This mode switch affects the canvas only. Left sidebar lists are always your own.
+                            </p>
+                        </div>
+                        <div className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--card-bg)] p-0.5">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    trackMyTeamAction("myteam.switch_my_workspace");
+                                    setWorkspaceMode("my");
+                                }}
+                                className={cn(
+                                    "h-7 rounded px-2.5 text-[11px] font-semibold transition-colors",
+                                    workspaceMode === "my"
+                                        ? "bg-[var(--primary)] text-white"
+                                        : "text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                )}
+                            >
+                                My Canvas
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    trackMyTeamAction("myteam.switch_team_workspace");
+                                    setWorkspaceMode("team");
+                                }}
+                                className={cn(
+                                    "h-7 rounded px-2.5 text-[11px] font-semibold transition-colors",
+                                    workspaceMode === "team"
+                                        ? "bg-[var(--primary)] text-white"
+                                        : "text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                )}
+                            >
+                                Team Canvas
+                            </button>
+                        </div>
+                    </div>
+                </div>
                 <div
                     ref={canvasRef}
                     className="relative flex-1 min-h-0 bg-[var(--bg)] overflow-hidden"
@@ -5917,7 +6052,7 @@ export default function WorkspacePage() {
                                 onPointerDown={(event) => beginGroupDragFromLabel(event, outline.id)}
                                 onContextMenu={(event) => openCanvasGroupItemMenu(event, outline.id)}
                                 className="pointer-events-auto absolute -top-2 left-3 cursor-grab select-none rounded-sm border border-[var(--primary)]/45 bg-[var(--card-bg)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--primary)] active:cursor-grabbing"
-                                title="드래그해서 그룹 이동"
+                                title="Drag to move group"
                             >
                                 {outline.name}
                             </button>
@@ -5973,7 +6108,7 @@ export default function WorkspacePage() {
                                     }}
                                     className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-sm bg-transparent text-[var(--muted)] hover:text-rose-500"
                                     aria-label={`Remove ${displayTitle}`}
-                                    title="워크스페이스에서 지우기"
+                                    title="Remove from Workspace"
                                 >
                                     <X className="h-3.5 w-3.5" />
                                 </button>
@@ -5983,7 +6118,7 @@ export default function WorkspacePage() {
                                         onPointerDown={(event) => beginFileShareDrag(event, file)}
                                         className="absolute -left-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card-bg)] text-[var(--fg)] shadow-sm hover:border-[var(--primary)] hover:text-[var(--primary)]"
                                         aria-label={`Share ${displayTitle}`}
-                                        title="파일 보내기"
+                                        title="Send File"
                                     >
                                         <Plus className="h-3.5 w-3.5" />
                                     </button>
@@ -6104,7 +6239,7 @@ export default function WorkspacePage() {
                                     }}
                                     className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-sm bg-transparent text-[var(--muted)] hover:text-rose-500"
                                     aria-label={`Remove ${member.username || member.userId}`}
-                                    title="워크스페이스에서 지우기"
+                                    title="Remove from Workspace"
                                 >
                                     <X className="h-3.5 w-3.5" />
                                 </button>
@@ -6265,7 +6400,7 @@ export default function WorkspacePage() {
                                                             setEditingAnnotationTitleId(annotation.id);
                                                         }}
                                                         className="truncate rounded-sm px-1 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                                                        title="이름 수정"
+                                                        title="Rename"
                                                     >
                                                         {annotation.title || getDefaultAnnotationTitle(annotation.kind)}
                                                     </button>
@@ -6280,7 +6415,7 @@ export default function WorkspacePage() {
                                                 }}
                                                 className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-[var(--muted)] hover:text-[var(--fg)]"
                                                 aria-label={isComment ? "Minimize comment" : "Minimize memo"}
-                                                title="줄이기"
+                                                title="Minimize"
                                             >
                                                 <span className="block h-[2px] w-4 rounded-full bg-current" />
                                             </button>
@@ -6294,7 +6429,7 @@ export default function WorkspacePage() {
                                                     updateAnnotationText(annotation.id, event.target.value)
                                                 }
                                                 className="h-full w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--border)]"
-                                                placeholder={isComment ? "코멘트를 입력하세요." : "메모를 입력하세요."}
+                                                placeholder={isComment ? "Enter a comment." : "Enter a memo."}
                                             />
                                         </div>
                                         <button
@@ -6327,7 +6462,7 @@ export default function WorkspacePage() {
                                                 openAnnotationEditor(annotation.id);
                                             }}
                                             className="flex w-56 cursor-grab items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/15 px-2 py-1.5 text-left shadow-sm transition-colors hover:bg-sky-500/20 active:cursor-grabbing"
-                                            title={annotation.text || "내용 없음"}
+                                            title={annotation.text || "No content"}
                                         >
                                             <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-sky-500/35 bg-sky-500/20 text-sky-300">
                                                 <MessageCircle className="h-4 w-4" />
@@ -6338,7 +6473,7 @@ export default function WorkspacePage() {
                                                         (viewerMember?.username || data.viewerUserId || "Unknown")}
                                                 </p>
                                                 <p className="truncate text-[11px] text-sky-100/90">
-                                                    {String(annotation.text || "").trim() || "내용 없음"}
+                                                    {String(annotation.text || "").trim() || "No content"}
                                                 </p>
                                             </div>
                                         </button>
@@ -6398,8 +6533,8 @@ export default function WorkspacePage() {
                         style={{ left: fileShareDrag.currentX, top: fileShareDrag.currentY + 18 }}
                     >
                         {fileShareDrag.hoverUserId
-                            ? `${fileShareDrag.hoverUsername}에게 보내기`
-                            : "멤버 카드에 드롭"}
+                            ? `Send to ${fileShareDrag.hoverUsername}`
+                            : "Drop on a member card"}
                     </div>
                 </div>
             )}
@@ -6481,7 +6616,7 @@ export default function WorkspacePage() {
                             <div className="my-1 border-t border-[var(--border)]" />
                             <div className="group/move relative">
                                 <div className="flex w-full items-center justify-between px-3 py-1.5 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                                    <span>그룹으로 이동</span>
+                                    <span>Move to Group</span>
                                     <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                                 </div>
                                 <div
@@ -6491,7 +6626,7 @@ export default function WorkspacePage() {
                                     )}
                                 >
                                     {workspaceGroups.length === 0 ? (
-                                        <p className="px-3 py-2 text-xs text-[var(--muted)]">그룹이 없습니다.</p>
+                                        <p className="px-3 py-2 text-xs text-[var(--muted)]">No groups available.</p>
                                     ) : (
                                         <div className="max-h-60 overflow-auto">
                                             {workspaceGroups.map((group) => (
@@ -6517,7 +6652,7 @@ export default function WorkspacePage() {
                                     className="w-full px-3 py-1.5 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                     onClick={removeProfileItemFromGroupsFromMenu}
                                 >
-                                    그룹에서 제외하기
+                                    Remove from Group
                                 </button>
                             )}
                             {canRemoveProfileMenuItem && (
@@ -6526,7 +6661,7 @@ export default function WorkspacePage() {
                                     className="w-full px-3 py-1.5 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                                     onClick={removeProfileItemFromWorkspaceFromMenu}
                                 >
-                                    워크스페이스에서 지우기
+                                    Remove from Workspace
                                 </button>
                             )}
                         </>
@@ -6580,21 +6715,21 @@ export default function WorkspacePage() {
                         className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                         onClick={openCreateEntry}
                     >
-                        폴더 만들기
+                        Create Folder
                     </button>
                     <button
                         type="button"
                         className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                         onClick={triggerImportFiles}
                     >
-                        파일 불러오기
+                        Import Files
                     </button>
                     <button
                         type="button"
                         className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                         onClick={triggerImportFolders}
                     >
-                        폴더 불러오기
+                        Import Folder
                     </button>
                 </div>
             )}
@@ -6602,28 +6737,33 @@ export default function WorkspacePage() {
             {workspaceCanvasMenu && (
                 <div
                     data-workspace-canvas-context-menu="true"
-                    className="fixed z-[73] inline-flex w-fit min-w-0 flex-col overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
+                    className="fixed z-[73] inline-flex w-fit min-w-0 flex-col overflow-visible rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
                     style={{ left: `${workspaceCanvasMenu.x}px`, top: `${workspaceCanvasMenu.y}px` }}
                     onMouseDown={(event) => event.stopPropagation()}
                 >
-                    {workspaceMode === "my" && selectedCanvasItemKeys.length > 0 && (
+                    {selectedCanvasItemKeys.length > 0 && (
                         <button
                             type="button"
                             className="whitespace-nowrap px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                             onClick={createWorkspaceGroupFromSelection}
                         >
-                            그룹 만들기 ({selectedCanvasItemKeys.length})
+                            Create Group ({selectedCanvasItemKeys.length})
                         </button>
                     )}
                     {selectedCanvasItemKeys.length > 0 && (
                         <div className="group/move relative">
                             <div className="flex w-full items-center justify-between whitespace-nowrap px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                                <span>그룹으로 이동</span>
+                                <span>Move to Group</span>
                                 <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                             </div>
-                            <div className="absolute left-full top-0 z-10 ml-1 hidden min-w-[188px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md group-hover/move:block group-focus-within/move:block">
+                            <div
+                                className={cn(
+                                    "absolute top-0 z-10 hidden min-w-[188px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md group-hover/move:block group-focus-within/move:block",
+                                    workspaceCanvasMenu?.moveSubmenuLeft ? "right-full mr-0" : "left-full ml-0"
+                                )}
+                            >
                                 {workspaceGroups.length === 0 ? (
-                                    <p className="px-3 py-2 text-xs text-[var(--muted)]">그룹이 없습니다.</p>
+                                    <p className="px-3 py-2 text-xs text-[var(--muted)]">No groups available.</p>
                                 ) : (
                                     <div className="max-h-60 overflow-auto">
                                         {workspaceGroups.map((group) => (
@@ -6650,7 +6790,7 @@ export default function WorkspacePage() {
                             className="whitespace-nowrap px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                             onClick={removeSelectedCanvasItemsFromWorkspace}
                         >
-                            워크스페이스에서 지우기 ({selectedCanvasItemKeys.length})
+                            Remove from Workspace ({selectedCanvasItemKeys.length})
                         </button>
                     )}
                     {workspaceCanvasMenu.mode !== "groupOnly" && (
@@ -6674,12 +6814,12 @@ export default function WorkspacePage() {
                 >
                     <div className="group/move relative">
                         <div className="flex w-full items-center justify-between px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                            <span>그룹으로 이동</span>
+                            <span>Move to Group</span>
                             <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                         </div>
                         <div className="absolute left-full top-0 z-10 ml-1 hidden min-w-[188px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md group-hover/move:block group-focus-within/move:block">
                             {workspaceGroups.length === 0 ? (
-                                <p className="px-3 py-2 text-xs text-[var(--muted)]">그룹이 없습니다.</p>
+                                <p className="px-3 py-2 text-xs text-[var(--muted)]">No groups available.</p>
                             ) : (
                                 <div className="max-h-60 overflow-auto">
                                     {workspaceGroups.map((group) => (
@@ -6707,7 +6847,7 @@ export default function WorkspacePage() {
                                 className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                 onClick={removeAnnotationItemFromGroupsFromMenu}
                             >
-                                그룹에서 제외하기
+                                Remove from Group
                             </button>
                             <div className="my-1 border-t border-[var(--border)]" />
                         </>
@@ -6718,7 +6858,7 @@ export default function WorkspacePage() {
                             className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                             onClick={handleDeleteAnnotationFromMenu}
                         >
-                            워크스페이스에서 지우기
+                            Remove from Workspace
                         </button>
                     )}
                 </div>
@@ -6733,12 +6873,12 @@ export default function WorkspacePage() {
                 >
                     <div className="group/move relative">
                         <div className="flex w-full items-center justify-between px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                            <span>그룹으로 이동</span>
+                            <span>Move to Group</span>
                             <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                         </div>
                         <div className="absolute left-full top-0 z-10 ml-1 hidden min-w-[188px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md group-hover/move:block group-focus-within/move:block">
                             {workspaceGroups.length === 0 ? (
-                                <p className="px-3 py-2 text-xs text-[var(--muted)]">그룹이 없습니다.</p>
+                                <p className="px-3 py-2 text-xs text-[var(--muted)]">No groups available.</p>
                             ) : (
                                 <div className="max-h-60 overflow-auto">
                                     {workspaceGroups.map((group) => (
@@ -6763,7 +6903,7 @@ export default function WorkspacePage() {
                             <div className="my-1 border-t border-[var(--border)]" />
                             <div className="group/share relative">
                                 <div className="flex w-full items-center justify-between px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                                    <span>파일 보내기</span>
+                                    <span>Send File</span>
                                     <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                                 </div>
                                 <div
@@ -6796,7 +6936,7 @@ export default function WorkspacePage() {
                                 className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                 onClick={removeCanvasFileItemFromGroupsFromMenu}
                             >
-                                그룹에서 제외하기
+                                Remove from Group
                             </button>
                         </>
                     )}
@@ -6808,7 +6948,7 @@ export default function WorkspacePage() {
                                 className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                                 onClick={removeCanvasFileItemFromWorkspaceFromMenu}
                             >
-                                워크스페이스에서 지우기
+                                Remove from Workspace
                             </button>
                         </>
                     )}
@@ -6827,7 +6967,7 @@ export default function WorkspacePage() {
                         className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                         onClick={startInlineRenameFromMenu}
                     >
-                        이름 바꾸기
+                        Rename
                     </button>
                     {!fileMenuTargetIsFolder && (
                         <button
@@ -6835,7 +6975,7 @@ export default function WorkspacePage() {
                             className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                             onClick={openMoveFileFromMenu}
                         >
-                            폴더로 이동하기
+                            Move to Folder
                         </button>
                     )}
                     {!fileMenuTargetIsFolder && (
@@ -6844,13 +6984,13 @@ export default function WorkspacePage() {
                             className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                             onClick={openCreateEntryForFileFromMenu}
                         >
-                            폴더 만들기
+                            Create Folder
                         </button>
                     )}
                     {canSendFileFromSidebarMenu && (
                         <div className="group/share relative">
                             <div className="flex w-full items-center justify-between px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                                <span>파일 보내기</span>
+                                <span>Send File</span>
                                 <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                             </div>
                             <div
@@ -6879,7 +7019,7 @@ export default function WorkspacePage() {
                         className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                         onClick={() => void handleDeleteFileFromMenu()}
                     >
-                        지우기
+                        Delete
                     </button>
                 </div>
             )}
@@ -6892,22 +7032,20 @@ export default function WorkspacePage() {
                     onMouseDown={(event) => event.stopPropagation()}
                 >
                     {!groupMenu.groupId ? (
-                        workspaceMode === "my" ? (
-                            <button
-                                type="button"
-                                className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                                onClick={createEmptyWorkspaceGroupFromSidebar}
-                            >
-                                그룹 만들기
-                            </button>
-                        ) : null
+                        <button
+                            type="button"
+                            className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                            onClick={createEmptyWorkspaceGroupFromSidebar}
+                        >
+                            Create Group
+                        </button>
                     ) : groupMenu.source === "canvas" ? (
                         <button
                             type="button"
                             className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                             onClick={handleHideCanvasGroupFromMenu}
                         >
-                            워크스페이스에서 지우기
+                            Remove from Workspace
                         </button>
                     ) : (
                         <>
@@ -6916,14 +7054,14 @@ export default function WorkspacePage() {
                                 className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                 onClick={startGroupInlineRenameFromMenu}
                             >
-                                이름 바꾸기
+                                Rename
                             </button>
                             <button
                                 type="button"
                                 className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                                 onClick={handleDeleteGroupFromMenu}
                             >
-                                지우기
+                                Delete
                             </button>
                         </>
                     )}
@@ -6942,7 +7080,7 @@ export default function WorkspacePage() {
                         className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                         onClick={handleRemoveGroupEntryFromMenu}
                     >
-                        그룹에서 제거
+                        Remove from Group
                     </button>
                 </div>
             )}
@@ -6974,128 +7112,112 @@ export default function WorkspacePage() {
                 }}
             />
 
-            {createEntryModal.open && (
-                <div
-                    className="fixed inset-0 z-[73] flex items-center justify-center bg-black/45 backdrop-blur-sm px-4"
-                    onMouseDown={(event) => {
-                        if (event.target === event.currentTarget) {
-                            closeCreateEntry();
-                        }
-                    }}
-                >
-                    <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] shadow-2xl">
-                        <div className="border-b border-[var(--border)] px-5 py-4">
-                            <h3 className="text-base font-semibold text-[var(--fg)]">폴더 만들기</h3>
-                        </div>
-                        <div className="space-y-2 px-5 py-4">
-                            <label className="text-xs text-[var(--muted)]">Name</label>
-                            <input
-                                value={createEntryModal.name}
-                                onChange={(event) =>
-                                    setCreateEntryModal((prev) => ({
-                                        ...prev,
-                                        name: event.target.value.slice(0, 120),
-                                    }))
-                                }
-                                className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
-                                placeholder="Folder name"
-                            />
-                            {createEntryModal.error && (
-                                <p className="text-xs text-rose-500">{createEntryModal.error}</p>
-                            )}
-                        </div>
-                        <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-4">
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={closeCreateEntry}
-                                disabled={createEntryModal.isSubmitting}
-                            >
-                                Cancel
-                            </Button>
-                            <Button
-                                type="button"
-                                size="sm"
-                                onClick={() => void submitCreateEntry()}
-                                disabled={createEntryModal.isSubmitting}
-                            >
-                                {createEntryModal.isSubmitting ? "Creating..." : "Create"}
-                            </Button>
-                        </div>
-                    </div>
+            <ModalShell open={createEntryModal.open} onClose={closeCreateEntry} labelledBy={createEntryDialogTitleId}>
+                <div className="border-b border-[var(--border)] px-5 py-4">
+                    <h3 id={createEntryDialogTitleId} className="text-base font-semibold text-[var(--fg)]">
+                        Create Folder
+                    </h3>
                 </div>
-            )}
+                <div className="space-y-2 px-5 py-4">
+                    <label htmlFor={createEntryInputId} className="text-xs text-[var(--muted)]">
+                        Name
+                    </label>
+                    <input
+                        id={createEntryInputId}
+                        value={createEntryModal.name}
+                        onChange={(event) =>
+                            setCreateEntryModal((prev) => ({
+                                ...prev,
+                                name: event.target.value.slice(0, 120),
+                            }))
+                        }
+                        className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
+                        placeholder="Folder name"
+                    />
+                    {createEntryModal.error && <p className="text-xs text-rose-500">{createEntryModal.error}</p>}
+                </div>
+                <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-4">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={closeCreateEntry}
+                        disabled={createEntryModal.isSubmitting}
+                    >
+                        Cancel
+                    </Button>
+                    <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void submitCreateEntry()}
+                        disabled={createEntryModal.isSubmitting}
+                    >
+                        {createEntryModal.isSubmitting ? "Creating..." : "Create"}
+                    </Button>
+                </div>
+            </ModalShell>
 
-            {moveFileModal.open && (
-                <div
-                    className="fixed inset-0 z-[74] flex items-center justify-center bg-black/45 backdrop-blur-sm px-4"
-                    onMouseDown={(event) => {
-                        if (event.target === event.currentTarget) {
-                            closeMoveFile();
-                        }
-                    }}
-                >
-                    <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] shadow-2xl">
-                        <div className="border-b border-[var(--border)] px-5 py-4">
-                            <h3 className="text-base font-semibold text-[var(--fg)]">폴더로 이동하기</h3>
-                        </div>
-                        <div className="space-y-2 px-5 py-4">
-                            <label className="text-xs text-[var(--muted)]">Destination</label>
-                            <select
-                                value={moveFileModal.folderId}
-                                onChange={(event) =>
-                                    setMoveFileModal((prev) => ({
-                                        ...prev,
-                                        folderId: event.target.value,
-                                    }))
-                                }
-                                className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
-                            >
-                                <option value="">(루트)</option>
-                                {moveFolderOptions.map((folder) => (
-                                    <option key={folder.id} value={folder.id}>
-                                        {getFolderDisplayName(folder.title)}
-                                    </option>
-                                ))}
-                            </select>
-                            {moveFileModal.error && (
-                                <p className="text-xs text-rose-500">{moveFileModal.error}</p>
-                            )}
-                        </div>
-                        <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-4">
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={closeMoveFile}
-                                disabled={moveFileModal.isSubmitting}
-                            >
-                                Cancel
-                            </Button>
-                            <Button
-                                type="button"
-                                size="sm"
-                                onClick={() => void submitMoveFile()}
-                                disabled={moveFileModal.isSubmitting}
-                            >
-                                {moveFileModal.isSubmitting ? "Moving..." : "Move"}
-                            </Button>
-                        </div>
-                    </div>
+            <ModalShell open={moveFileModal.open} onClose={closeMoveFile} labelledBy={moveFileDialogTitleId}>
+                <div className="border-b border-[var(--border)] px-5 py-4">
+                    <h3 id={moveFileDialogTitleId} className="text-base font-semibold text-[var(--fg)]">
+                        Move to Folder
+                    </h3>
                 </div>
-            )}
+                <div className="space-y-2 px-5 py-4">
+                    <label htmlFor={moveFileSelectId} className="text-xs text-[var(--muted)]">
+                        Destination
+                    </label>
+                    <select
+                        id={moveFileSelectId}
+                        value={moveFileModal.folderId}
+                        onChange={(event) =>
+                            setMoveFileModal((prev) => ({
+                                ...prev,
+                                folderId: event.target.value,
+                            }))
+                        }
+                        className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
+                    >
+                        <option value="">(Root)</option>
+                        {moveFolderOptions.map((folder) => (
+                            <option key={folder.id} value={folder.id}>
+                                {getFolderDisplayName(folder.title)}
+                            </option>
+                        ))}
+                    </select>
+                    {moveFileModal.error && <p className="text-xs text-rose-500">{moveFileModal.error}</p>}
+                </div>
+                <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-4">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={closeMoveFile}
+                        disabled={moveFileModal.isSubmitting}
+                    >
+                        Cancel
+                    </Button>
+                    <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => void submitMoveFile()}
+                        disabled={moveFileModal.isSubmitting}
+                    >
+                        {moveFileModal.isSubmitting ? "Moving..." : "Move"}
+                    </Button>
+                </div>
+            </ModalShell>
 
             <ConfirmModal
                 open={fileShareConfirm.open}
-                title={fileShareConfirm.isResend ? "파일 재전송 확인" : "파일 전송 확인"}
+                title={fileShareConfirm.isResend ? "Resend file request" : "Send file request"}
                 message={
                     fileShareConfirm.isResend
-                        ? `한번 보낸 파일입니다. ${fileShareConfirm.toUsername}님에게 다시 보내시겠습니까?`
-                        : `${fileShareConfirm.toUsername}님에게 ${fileShareConfirm.fileName} 파일을 보내시겠습니까?`
+                        ? `This file request was already sent. Send it again to ${fileShareConfirm.toUsername}?`
+                        : `Send ${fileShareConfirm.fileName} to ${fileShareConfirm.toUsername}?`
                 }
-                confirmLabel={fileShareConfirm.isResend ? "다시 보내기" : "보내기"}
-                cancelLabel="취소"
+                confirmLabel={fileShareConfirm.isResend ? "Send Again" : "Send"}
+                cancelLabel="Cancel"
                 isProcessing={fileShareConfirm.isSubmitting}
                 onCancel={closeFileShareConfirm}
                 onConfirm={() => {
@@ -7106,9 +7228,9 @@ export default function WorkspacePage() {
             <ConfirmModal
                 open={roleChangeConfirm.open}
                 title="Change role"
-                message={`${roleChangeConfirm.targetUsername}을(를) ${roleChangeConfirm.nextRole}(으)로 정말 바꾸시겠습니까?`}
-                confirmLabel="변경"
-                cancelLabel="취소"
+                message={`Change ${roleChangeConfirm.targetUsername} role to ${roleChangeConfirm.nextRole}?`}
+                confirmLabel="Change"
+                cancelLabel="Cancel"
                 isProcessing={roleChangeConfirm.isSubmitting}
                 onCancel={cancelRoleChangeConfirm}
                 onConfirm={() => {
@@ -7125,3 +7247,4 @@ export default function WorkspacePage() {
         </div>
     );
 }
+

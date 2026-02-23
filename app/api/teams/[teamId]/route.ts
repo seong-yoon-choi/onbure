@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { deleteTeam, getTeamById, getTeamMembers, isActiveMemberStatus, updateTeamProfile } from "@/lib/db/teams";
 import { syncAcceptedTeamMembershipsForUser } from "@/lib/db/requests";
-import { listUsers } from "@/lib/db/users";
+import { listUsers, verifyUserPassword } from "@/lib/db/users";
 import { appendAuditLog } from "@/lib/db/audit";
 
 export const runtime = "nodejs";
@@ -233,7 +233,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-    _req: Request,
+    req: Request,
     { params }: { params: Promise<{ teamId: string }> }
 ) {
     const session = await getServerSession(authOptions);
@@ -252,6 +252,16 @@ export async function DELETE(
     });
 
     try {
+        const body = await req.json().catch(() => ({} as { password?: string }));
+        const password = typeof body?.password === "string" ? body.password : "";
+        if (!password) {
+            return NextResponse.json({ error: "Password is required." }, { status: 400 });
+        }
+        const isValidPassword = await verifyUserPassword(currentUserId, password);
+        if (!isValidPassword) {
+            return NextResponse.json({ error: "Invalid password." }, { status: 403 });
+        }
+
         const team = await getTeamById(teamId);
         if (!team) {
             return NextResponse.json({ error: "Team not found." }, { status: 404 });

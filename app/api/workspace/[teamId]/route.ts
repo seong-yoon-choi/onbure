@@ -18,7 +18,7 @@ import {
 } from "@/lib/db/workspace";
 import { getTeamById, getTeamMembers, isActiveMemberStatus, updateTeamMemberRole } from "@/lib/db/teams";
 import { syncAcceptedTeamMembershipsForUser } from "@/lib/db/requests";
-import { listUsers } from "@/lib/db/users";
+import { listUsersByUserIds } from "@/lib/db/users";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { appendAuditLog } from "@/lib/db/audit";
@@ -215,15 +215,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ teamId: 
             return NextResponse.json({ error: "Forbidden" }, { status: 403 });
         }
 
-        const [links, files, myFiles, tasks, meetingNotes, agreementNotes, users] = await Promise.all([
+        const [links, files, myFiles, tasks, meetingNotes, agreementNotes] = await Promise.all([
             getLinks(teamId),
             getFiles(teamId, { scope: "team" }),
             getFiles(teamId, { scope: "user", ownerUserId: userId }),
             getTasks(teamId),
             getMeetingNotes(teamId),
             getAgreementNotes(teamId),
-            listUsers(),
         ]);
+        const memberUserIds = Array.from(new Set(members.map((member) => member.userId).filter(Boolean)));
+        const users = await listUsersByUserIds(memberUserIds);
 
         const usernameByUserId = new Map(users.map((user) => [user.userId, user.username || user.userId]));
         const membersWithUsername = members.map((member) => ({

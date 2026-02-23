@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { SessionProvider } from "next-auth/react";
+import { usePathname } from "next/navigation";
 import { reportClientError } from "@/lib/monitoring/client-errors";
 
 const THEME_STORAGE_KEY = "onbure.theme";
@@ -24,6 +25,8 @@ function applyTheme(theme: Theme) {
 }
 
 export function Providers({ children }: { children: React.ReactNode }) {
+    const pathname = usePathname();
+    const isAuthRoute = pathname === "/login" || pathname === "/register";
     const recentClientErrorMapRef = useRef<Map<string, number>>(new Map());
     const [theme, setThemeState] = useState<Theme>(() => {
         if (typeof document !== "undefined" && document.documentElement.classList.contains("dark")) {
@@ -48,17 +51,19 @@ export function Providers({ children }: { children: React.ReactNode }) {
         }
 
         setThemeState(nextTheme);
-        applyTheme(nextTheme);
     }, []);
 
     useEffect(() => {
-        applyTheme(theme);
-        try {
-            localStorage.setItem(THEME_STORAGE_KEY, theme);
-        } catch {
-            // Ignore localStorage errors (private mode / blocked storage).
+        const nextTheme: Theme = isAuthRoute ? "light" : theme;
+        applyTheme(nextTheme);
+        if (!isAuthRoute) {
+            try {
+                localStorage.setItem(THEME_STORAGE_KEY, theme);
+            } catch {
+                // Ignore localStorage errors (private mode / blocked storage).
+            }
         }
-    }, [theme]);
+    }, [isAuthRoute, theme]);
 
     useEffect(() => {
         const shouldReport = (key: string) => {

@@ -1,0 +1,4 @@
+﻿app/api/teams/[teamId]/leave/route.ts(5,61): error TS2305: Module '"@/lib/db/teams"' has no exported member 'leaveTeam'.
+lib/db/requests.ts(787,30): error TS2339: Property 'hasTeamMembershipRecord' does not exist on type 'typeof import("C:/Users/USER/Desktop/onbure/lib/db/teams")'.
+lib/db/teams.ts(1,69): error TS2307: Cannot find module '@/lib/notion-client' or its corresponding type declarations.
+lib/db/teams.ts(2,57): error TS2307: Cannot find module '@/lib/notion-schema' or its corresponding type declarations.

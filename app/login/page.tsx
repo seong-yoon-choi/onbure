@@ -7,12 +7,19 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { LockKeyhole } from "lucide-react";
+import { Eye, EyeOff, LockKeyhole } from "lucide-react";
 
 export default function LoginPage() {
     const router = useRouter();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [showPassword, setShowPassword] = useState(false);
+    const [capsLockOn, setCapsLockOn] = useState(false);
+    const passwordInputId = "login-password";
+
+    const handlePasswordKeyState = (event: React.KeyboardEvent<HTMLInputElement>) => {
+        setCapsLockOn(event.getModifierState("CapsLock"));
+    };
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
@@ -59,13 +66,35 @@ export default function LoginPage() {
                             placeholder="name@example.com"
                             required
                         />
-                        <Input
-                            name="password"
-                            type="password"
-                            label="Password"
-                            placeholder="Enter your password"
-                            required
-                        />
+                        <div className="w-full space-y-1.5">
+                            <label htmlFor={passwordInputId} className="text-xs font-medium text-[var(--muted)] uppercase tracking-wider ml-1">
+                                Password
+                            </label>
+                            <div className="relative">
+                                <input
+                                    id={passwordInputId}
+                                    name="password"
+                                    type={showPassword ? "text" : "password"}
+                                    placeholder="Enter your password"
+                                    required
+                                    onKeyDown={handlePasswordKeyState}
+                                    onKeyUp={handlePasswordKeyState}
+                                    onBlur={() => setCapsLockOn(false)}
+                                    className="flex h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 pr-10 text-sm text-[var(--fg)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]/40 focus:border-[var(--ring)] transition-all"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword((prev) => !prev)}
+                                    aria-label={showPassword ? "Hide password" : "Show password"}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-6 w-6 items-center justify-center rounded text-[var(--muted)] hover:text-[var(--fg)]"
+                                >
+                                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                </button>
+                            </div>
+                            {capsLockOn && (
+                                <p className="ml-1 text-xs text-amber-500">Caps Lock is on.</p>
+                            )}
+                        </div>
 
                         {error && (
                             <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-sm">

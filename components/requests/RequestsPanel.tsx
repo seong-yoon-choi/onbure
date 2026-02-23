@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { useSession } from "next-auth/react";
 import { useAuditRealtime } from "@/lib/realtime/use-audit-realtime";
 
-type RequestType = "CHAT" | "INVITE" | "JOIN" | "FILE";
+type RequestType = "CHAT" | "FRIEND" | "INVITE" | "JOIN" | "FILE" | "ALERT";
 type RequestStatus = "PENDING" | "ACCEPTED" | "DECLINED";
 type TypeFilter = "" | RequestType;
 
@@ -54,12 +54,18 @@ function statusStyle(status: RequestStatus) {
 
 function typeLabel(type: RequestType) {
     if (type === "CHAT") return "Chat Request";
+    if (type === "FRIEND") return "Friend Request";
     if (type === "INVITE") return "Team Invite";
     if (type === "FILE") return "File Share";
+    if (type === "ALERT") return "Record";
     return "Application";
 }
 
 function requestBodyText(req: RequestItem) {
+    if (req.type === "ALERT") {
+        return String(req.message || "").trim() || "A team member left.";
+    }
+
     if (req.type === "FILE") {
         const fileName = String(req.fileName || "").trim();
         const message = String(req.message || "").trim();
@@ -137,7 +143,9 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
     }, [fetchRequests]);
 
     useAuditRealtime(sessionStatus === "authenticated" && Boolean(currentUserId), (row) => {
-        if (String(row.category || "").toLowerCase() !== "request") return;
+        const category = String(row.category || "").toLowerCase();
+        const eventName = String(row.event || "").toLowerCase();
+        if (category !== "request" && !(category === "team" && eventName === "team_member_left")) return;
         const actorUserId = String(row.actor_user_id || "").trim();
         const targetUserId = String(row.target_user_id || "").trim();
         if (actorUserId !== currentUserId && targetUserId !== currentUserId) return;
@@ -183,7 +191,7 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
 
             await fetchRequests();
 
-            if (item.type === "CHAT" && status === "ACCEPTED" && typeof window !== "undefined") {
+            if ((item.type === "CHAT" || item.type === "FRIEND") && status === "ACCEPTED" && typeof window !== "undefined") {
                 window.dispatchEvent(new Event("onbure-chat-connections-updated"));
             }
         } finally {
@@ -233,7 +241,7 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
         <div className="space-y-6">
             {showTitle && (
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h1 className="text-2xl font-bold text-[var(--fg)]">Requests</h1>
+                    <h1 className="text-2xl font-bold text-[var(--fg)]">Notices</h1>
                     <div className="flex items-center gap-2">
                         <div className="relative">
                             <ListFilter className="w-4 h-4 text-[var(--muted)] absolute left-2 top-2.5" />
@@ -241,13 +249,15 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
                                 value={filter}
                                 onChange={(e) => setFilter((e.target.value as TypeFilter) || "")}
                                 className="h-9 pl-8 pr-3 rounded-md border border-[var(--border)] bg-[var(--input-bg)] text-[var(--fg)] text-sm focus:outline-none"
-                                aria-label="Request type filter"
+                                aria-label="Notice type filter"
                             >
                                 <option value="">All (Latest)</option>
                                 <option value="CHAT">Chat Requests</option>
+                                <option value="FRIEND">Friend Requests</option>
                                 <option value="INVITE">Team Invites</option>
                                 <option value="JOIN">Applications</option>
                                 <option value="FILE">File Shares</option>
+                                <option value="ALERT">Records</option>
                             </select>
                         </div>
                     </div>
@@ -262,13 +272,15 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
                             value={filter}
                             onChange={(e) => setFilter((e.target.value as TypeFilter) || "")}
                             className="h-9 pl-8 pr-3 rounded-md border border-[var(--border)] bg-[var(--input-bg)] text-[var(--fg)] text-sm focus:outline-none"
-                            aria-label="Request type filter"
+                            aria-label="Notice type filter"
                         >
                             <option value="">All (Latest)</option>
                             <option value="CHAT">Chat Requests</option>
+                            <option value="FRIEND">Friend Requests</option>
                             <option value="INVITE">Team Invites</option>
                             <option value="JOIN">Applications</option>
                             <option value="FILE">File Shares</option>
+                            <option value="ALERT">Records</option>
                         </select>
                     </div>
                 </div>
@@ -278,7 +290,7 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
                 {loading ? <div className="text-[var(--muted)]">Loading...</div> :
                     visibleItems.length === 0 ? (
                         <div className="text-[var(--muted)] py-10">
-                            No requests yet.
+                            No notices yet.
                         </div>
                     ) : (
                         visibleItems.map((req) => (
@@ -286,8 +298,15 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
                                 <div className="min-w-0 space-y-1">
                                     <div className="flex items-center gap-2 flex-wrap">
                                         <p className="font-bold text-[var(--fg)] text-sm">{typeLabel(req.type)}</p>
-                                        <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-semibold", statusStyle(req.status))}>
-                                            {req.status}
+                                        <span
+                                            className={cn(
+                                                "px-2 py-0.5 rounded-full text-[10px] font-semibold",
+                                                req.type === "ALERT"
+                                                    ? "bg-slate-500/10 text-slate-600 dark:text-slate-300 border border-slate-500/20"
+                                                    : statusStyle(req.status)
+                                            )}
+                                        >
+                                            {req.type === "ALERT" ? "RECORD" : req.status}
                                         </span>
                                     </div>
                                     <p className="text-sm text-[var(--muted)] truncate">
@@ -298,7 +317,7 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
                                     </p>
                                 </div>
 
-                                {req.status === "PENDING" && (
+                                {req.status === "PENDING" && req.type !== "ALERT" && (
                                     <div className="flex gap-2 shrink-0">
                                         <Button
                                             size="sm"
@@ -329,7 +348,7 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
                                             className="h-8 gap-1.5"
                                         >
                                             <Download className="w-3.5 h-3.5" />
-                                            {downloadingId === req.id ? "Downloading..." : "받기"}
+                                            {downloadingId === req.id ? "Downloading..." : "Download"}
                                         </Button>
                                     </div>
                                 )}
@@ -347,3 +366,4 @@ export default function RequestsPanel({ showTitle = true }: RequestsPanelProps) 
         </div>
     );
 }
+

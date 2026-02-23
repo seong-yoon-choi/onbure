@@ -3,7 +3,11 @@ import { getPublicTeams, getTeamMembershipsForUser } from "@/lib/db/teams";
 import { listUsers } from "@/lib/db/users";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getActiveChatPartnerStates, getJoinRequestsForApplicantByStatuses } from "@/lib/db/requests";
+import {
+    getActiveChatPartnerStates,
+    getActiveFriendPartnerStates,
+    getJoinRequestsForApplicantByStatuses,
+} from "@/lib/db/requests";
 
 interface DiscoveryTeamRow {
     id: string;
@@ -31,6 +35,8 @@ interface DiscoveryPersonRow {
     bio: string;
     chatState: "NONE" | "PENDING" | "ACCEPTED";
     canRequestChat: boolean;
+    friendState: "NONE" | "PENDING" | "ACCEPTED";
+    canRequestFriend: boolean;
 }
 
 interface DiscoveryPayload {
@@ -65,13 +71,14 @@ export async function GET() {
         return NextResponse.json(cached.payload);
     }
 
-    const [teamsResult, usersResult, activeChatStatesResult, membershipsResult, joinRequestsResult] =
+    const [teamsResult, usersResult, activeChatStatesResult, activeFriendStatesResult, membershipsResult, joinRequestsResult] =
         await Promise.allSettled([
             getPublicTeams(),
             listUsers(),
             getActiveChatPartnerStates(userId),
+            getActiveFriendPartnerStates(userId),
             getTeamMembershipsForUser(userId),
-            getJoinRequestsForApplicantByStatuses(userId, ["PENDING", "ACCEPTED"]),
+            getJoinRequestsForApplicantByStatuses(userId, ["PENDING"]),
         ]);
 
     const isRejected = (result: PromiseSettledResult<unknown>) => result.status === "rejected";
@@ -79,6 +86,7 @@ export async function GET() {
         isRejected(teamsResult) ||
         isRejected(usersResult) ||
         isRejected(activeChatStatesResult) ||
+        isRejected(activeFriendStatesResult) ||
         isRejected(membershipsResult) ||
         isRejected(joinRequestsResult);
 
@@ -90,6 +98,10 @@ export async function GET() {
                 activeChatStatesResult.status === "rejected"
                     ? String(activeChatStatesResult.reason)
                     : undefined,
+            friendStatesError:
+                activeFriendStatesResult.status === "rejected"
+                    ? String(activeFriendStatesResult.reason)
+                    : undefined,
             membershipsError:
                 membershipsResult.status === "rejected" ? String(membershipsResult.reason) : undefined,
             joinRequestsError:
@@ -100,6 +112,7 @@ export async function GET() {
     const teams = teamsResult.status === "fulfilled" ? teamsResult.value : [];
     const users = usersResult.status === "fulfilled" ? usersResult.value : [];
     const activeChatStates = activeChatStatesResult.status === "fulfilled" ? activeChatStatesResult.value : {};
+    const activeFriendStates = activeFriendStatesResult.status === "fulfilled" ? activeFriendStatesResult.value : {};
     const memberships = membershipsResult.status === "fulfilled" ? membershipsResult.value : [];
     const myJoinRequests = joinRequestsResult.status === "fulfilled" ? joinRequestsResult.value : [];
 
@@ -126,7 +139,8 @@ export async function GET() {
     const others: DiscoveryPersonRow[] = users
         .filter((u) => u.userId !== userId)
         .map((u) => {
-            const state = activeChatStates[u.userId];
+            const chatState = activeChatStates[u.userId];
+            const friendState = activeFriendStates[u.userId];
             return {
                 id: String(u.userId || u.id || ""),
                 userId: String(u.userId || ""),
@@ -137,8 +151,10 @@ export async function GET() {
                 skills: Array.isArray(u.skills) ? u.skills : [],
                 availabilityHours: String(u.availabilityHours || ""),
                 bio: String(u.bio || ""),
-                chatState: (state ?? "NONE") as "NONE" | "PENDING" | "ACCEPTED",
-                canRequestChat: !state,
+                chatState: (chatState ?? "NONE") as "NONE" | "PENDING" | "ACCEPTED",
+                canRequestChat: !chatState,
+                friendState: (friendState ?? "NONE") as "NONE" | "PENDING" | "ACCEPTED",
+                canRequestFriend: !friendState,
             };
         });
 

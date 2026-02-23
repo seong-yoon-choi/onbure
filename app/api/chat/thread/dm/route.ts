@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getOrCreateDmThread, listThreadsForUser } from "@/lib/db/chat-widget";
-import { getAcceptedChatPartnerIds } from "@/lib/db/requests";
+import { getAcceptedConnectionPartnerIds } from "@/lib/db/requests";
 
 export async function POST(req: NextRequest) {
     const session = await getServerSession(authOptions);
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Invalid DM target user." }, { status: 400 });
         }
 
-        const acceptedPartners = new Set(await getAcceptedChatPartnerIds(currentUserId));
+        const acceptedPartners = new Set(await getAcceptedConnectionPartnerIds(currentUserId));
         if (!acceptedPartners.has(otherUserId)) {
             const threads = await listThreadsForUser(currentUserId);
             const hasExistingThread = threads.some(

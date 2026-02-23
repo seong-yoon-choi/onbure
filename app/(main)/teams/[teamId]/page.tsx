@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/components/ui/modal";
+import { trackUxClick } from "@/lib/ux/client";
 
 interface TeamMemberSummary {
     id: string;
@@ -166,8 +167,13 @@ export default function TeamDetailPage() {
     const [isSaving, setIsSaving] = useState(false);
     const [saveError, setSaveError] = useState("");
     const [isDeleting, setIsDeleting] = useState(false);
+    const [isLeavingTeam, setIsLeavingTeam] = useState(false);
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
     const [deleteError, setDeleteError] = useState("");
+    const [deletePassword, setDeletePassword] = useState("");
+    const [leaveTeamModalOpen, setLeaveTeamModalOpen] = useState(false);
+    const [leaveTeamError, setLeaveTeamError] = useState("");
+    const [leaveTeamPassword, setLeaveTeamPassword] = useState("");
     const [workStyleTooltip, setWorkStyleTooltip] = useState<{ x: number; y: number } | null>(null);
     const [leaveModalOpen, setLeaveModalOpen] = useState(false);
     const [pendingLeaveHref, setPendingLeaveHref] = useState<string | null>(null);
@@ -187,6 +193,14 @@ export default function TeamDetailPage() {
         recruitingRoles: [] as string[],
         roleInput: "",
     });
+
+    const trackTeamAction = (actionKey: string, context?: Record<string, unknown>) => {
+        trackUxClick(actionKey, {
+            page: "team_profile",
+            teamId,
+            ...context,
+        });
+    };
 
     useEffect(() => {
         async function load() {
@@ -236,6 +250,7 @@ export default function TeamDetailPage() {
         [team?.visibility]
     );
     const canEdit = Boolean(team?.isOwner);
+    const canLeaveTeam = Boolean(team?.isMember) && !Boolean(team?.isOwner);
     const canAddRole = form.roleInput.trim().length > 0;
     const isDirty = useMemo(() => {
         if (!team) return false;
@@ -469,22 +484,78 @@ export default function TeamDetailPage() {
     const openDeleteModal = () => {
         if (!canEdit || isEditing || isDeleting) return;
         setDeleteError("");
+        setDeletePassword("");
         setDeleteModalOpen(true);
     };
 
     const cancelDeleteTeam = () => {
         if (isDeleting) return;
         setDeleteModalOpen(false);
+        setDeletePassword("");
+        setDeleteError("");
+    };
+
+    const openLeaveTeamModal = () => {
+        if (!canLeaveTeam || isEditing || isLeavingTeam) return;
+        setLeaveTeamError("");
+        setLeaveTeamPassword("");
+        setLeaveTeamModalOpen(true);
+    };
+
+    const cancelLeaveTeam = () => {
+        if (isLeavingTeam) return;
+        setLeaveTeamModalOpen(false);
+        setLeaveTeamPassword("");
+        setLeaveTeamError("");
+    };
+
+    const confirmLeaveTeam = async () => {
+        if (!team || !canLeaveTeam || isLeavingTeam) return;
+        if (!leaveTeamPassword) {
+            setLeaveTeamError("Password is required.");
+            return;
+        }
+        setIsLeavingTeam(true);
+        setLeaveTeamError("");
+
+        try {
+            const res = await fetch(`/api/teams/${encodeURIComponent(team.teamId)}/leave`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ password: leaveTeamPassword }),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(payload.error || "Failed to leave team.");
+            }
+
+            if (typeof window !== "undefined") {
+                window.dispatchEvent(new Event("onbure-teams-updated"));
+            }
+            setLeaveTeamModalOpen(false);
+            setLeaveTeamPassword("");
+            router.push("/discovery");
+        } catch (e: any) {
+            setLeaveTeamError(e?.message || "Failed to leave team.");
+        } finally {
+            setIsLeavingTeam(false);
+        }
     };
 
     const confirmDeleteTeam = async () => {
         if (!team || !canEdit || isDeleting) return;
+        if (!deletePassword) {
+            setDeleteError("Password is required.");
+            return;
+        }
         setIsDeleting(true);
         setDeleteError("");
 
         try {
             const res = await fetch(`/api/teams/${encodeURIComponent(team.teamId)}`, {
                 method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ password: deletePassword }),
             });
             const payload = await res.json().catch(() => ({}));
             if (!res.ok) {
@@ -495,6 +566,7 @@ export default function TeamDetailPage() {
                 window.dispatchEvent(new Event("onbure-teams-updated"));
             }
             setDeleteModalOpen(false);
+            setDeletePassword("");
             router.push("/discovery");
         } catch (e: any) {
             setDeleteError(e?.message || "Failed to delete team.");
@@ -542,12 +614,26 @@ export default function TeamDetailPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
+                        {canLeaveTeam && !isEditing && (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={openLeaveTeamModal}
+                                disabled={isLeavingTeam}
+                                className="text-rose-500 border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-500 hover:border-rose-500/60"
+                            >
+                                {isLeavingTeam ? "Leaving..." : "Leave Team"}
+                            </Button>
+                        )}
                         {canEdit && !isEditing && (
                             <Button
                                 size="sm"
                                 variant="outline"
                                 className="text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
-                                onClick={() => setIsEditing(true)}
+                                onClick={() => {
+                                    trackTeamAction("myteam.edit_profile");
+                                    setIsEditing(true);
+                                }}
                             >
                                 Edit Profile
                             </Button>
@@ -586,14 +672,20 @@ export default function TeamDetailPage() {
                             </>
                         )}
                         {canEdit && !isEditing && (
-                            <Button size="sm" variant="destructive" onClick={openDeleteModal} disabled={isDeleting}>
+                            <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => {
+                                    trackTeamAction("myteam.delete_team");
+                                    openDeleteModal();
+                                }}
+                                disabled={isDeleting}
+                            >
                                 {isDeleting ? "Deleting..." : "Delete Team"}
                             </Button>
                         )}
                     </div>
                 </div>
-                {deleteError && <p className="text-xs text-rose-500">{deleteError}</p>}
-
                 {isEditing && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] p-3">
                         <div className="space-y-1 sm:col-span-2">
@@ -935,9 +1027,45 @@ export default function TeamDetailPage() {
             confirmLabel={isDeleting ? "Deleting..." : "Delete Team"}
             cancelLabel="Cancel"
             confirmVariant="destructive"
+            isProcessing={isDeleting}
             onConfirm={confirmDeleteTeam}
             onCancel={cancelDeleteTeam}
-        />
+        >
+            <div className="space-y-2">
+                <label className="text-xs text-[var(--muted)] uppercase tracking-wider">Password (Required)</label>
+                <input
+                    type="password"
+                    value={deletePassword}
+                    onChange={(event) => setDeletePassword(event.target.value)}
+                    placeholder="Enter your current password"
+                    className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--card-bg)] px-3 text-sm text-[var(--fg)]"
+                />
+                {deleteError ? <p className="text-xs text-rose-500">{deleteError}</p> : null}
+            </div>
+        </ConfirmModal>
+        <ConfirmModal
+            open={leaveTeamModalOpen}
+            title="Leave Team"
+            message="정말로 팀을 떠나시겠습니까?"
+            confirmLabel={isLeavingTeam ? "Leaving..." : "Leave Team"}
+            cancelLabel="Cancel"
+            confirmVariant="destructive"
+            isProcessing={isLeavingTeam}
+            onConfirm={confirmLeaveTeam}
+            onCancel={cancelLeaveTeam}
+        >
+            <div className="space-y-2">
+                <label className="text-xs text-[var(--muted)] uppercase tracking-wider">Password (Required)</label>
+                <input
+                    type="password"
+                    value={leaveTeamPassword}
+                    onChange={(event) => setLeaveTeamPassword(event.target.value)}
+                    placeholder="Enter your current password"
+                    className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--card-bg)] px-3 text-sm text-[var(--fg)]"
+                />
+                {leaveTeamError ? <p className="text-xs text-rose-500">{leaveTeamError}</p> : null}
+            </div>
+        </ConfirmModal>
         </>
     );
 }

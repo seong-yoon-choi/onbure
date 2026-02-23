@@ -4,7 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getUserByUserId } from "@/lib/db/users";
-import { getActiveChatPartnerStates } from "@/lib/db/requests";
+import { getActiveChatPartnerStates, getActiveFriendPartnerStates } from "@/lib/db/requests";
+
+type ConnectionStateMap = Record<string, "PENDING" | "ACCEPTED">;
 
 export async function GET(
     _req: NextRequest,
@@ -25,11 +27,17 @@ export async function GET(
     if (!user) {
         return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
-    const activeStates = currentUserId ? await getActiveChatPartnerStates(currentUserId) : {};
-    const stateValue = activeStates[user.userId];
-    const chatState: "NONE" | "PENDING" | "ACCEPTED" = stateValue ?? "NONE";
+    const [activeChatStates, activeFriendStates] = await Promise.all([
+        currentUserId ? getActiveChatPartnerStates(currentUserId) : Promise.resolve({} as ConnectionStateMap),
+        currentUserId ? getActiveFriendPartnerStates(currentUserId) : Promise.resolve({} as ConnectionStateMap),
+    ]);
+    const chatStateValue = activeChatStates[user.userId];
+    const friendStateValue = activeFriendStates[user.userId];
+    const chatState: "NONE" | "PENDING" | "ACCEPTED" = chatStateValue ?? "NONE";
+    const friendState: "NONE" | "PENDING" | "ACCEPTED" = friendStateValue ?? "NONE";
     const isSelf = currentUserId ? user.userId === currentUserId : false;
-    const canRequestChat = !isSelf && !stateValue;
+    const canRequestChat = !isSelf && !chatStateValue;
+    const canRequestFriend = !isSelf && !friendStateValue;
 
     return NextResponse.json({
         userId: user.userId,
@@ -44,7 +52,9 @@ export async function GET(
         bio: user.bio || "",
         portfolioLinks: user.portfolioLinks || [],
         chatState,
+        friendState,
         canRequestChat,
+        canRequestFriend,
         canInvite: !isSelf,
         isSelf,
     });

@@ -9,11 +9,14 @@ const themeInitScript = `(() => {
   try {
     const key = "onbure.theme";
     const stored = localStorage.getItem(key);
-    const theme = stored === "dark" ? "dark" : "light";
+    const hasStoredTheme = stored === "light" || stored === "dark";
+    const isAuthRoute = window.location.pathname === "/login" || window.location.pathname === "/register";
+    const persistedTheme = hasStoredTheme ? stored : "light";
+    const theme = isAuthRoute ? "light" : persistedTheme;
     const root = document.documentElement;
     root.classList.toggle("dark", theme === "dark");
     root.style.colorScheme = theme;
-    if (!stored) localStorage.setItem(key, theme);
+    if (!hasStoredTheme) localStorage.setItem(key, "light");
   } catch (_error) {}
 })();`;
 

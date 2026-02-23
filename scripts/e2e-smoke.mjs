@@ -79,6 +79,23 @@ async function expectPage(path) {
   console.log(`ok ${path} -> ${res.status}`);
 }
 
+async function expectPageContains(path, requiredSnippets) {
+  const res = await request(path);
+  if (!res.ok) {
+    throw new Error(`[${path}] expected 2xx, got ${res.status}`);
+  }
+  const html = await res.text();
+  if (!html || html.length < 40) {
+    throw new Error(`[${path}] response body looks invalid`);
+  }
+  for (const snippet of requiredSnippets) {
+    if (!html.includes(snippet)) {
+      throw new Error(`[${path}] expected HTML to include "${snippet}"`);
+    }
+  }
+  console.log(`ok ${path} -> ${res.status} (contains required UI markers)`);
+}
+
 async function expectOkJson(path) {
   const res = await request(path);
   if (!res.ok) {
@@ -146,6 +163,12 @@ async function run() {
   await expectStatus("/api/teams", 200);
   if (e2eTeamId) {
     await expectStatus(`/api/workspace/${encodeURIComponent(e2eTeamId)}`, 200);
+    await expectPageContains(`/workspace/${encodeURIComponent(e2eTeamId)}`, [
+      "Workspace Canvas",
+      "My Canvas",
+      "Team Canvas",
+      "Create Group",
+    ]);
   }
 
   console.log("[e2e-smoke] all checks passed");

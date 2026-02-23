@@ -3,6 +3,10 @@
 
 create extension if not exists pgcrypto;
 
+-- Cleanup: UX analytics feature removed.
+drop view if exists public.ux_navigation_counts;
+drop table if exists public.ux_events;
+
 -- Shared updated_at trigger
 create or replace function public.set_updated_at()
 returns trigger
@@ -22,7 +26,10 @@ create table if not exists public.profiles (
   username text not null,
   public_code text unique,
   password_hash text,
+  email_verified_at timestamptz,
   image_url text,
+  gender text,
+  age integer,
   country text,
   language text,
   skills text[] not null default '{}'::text[],
@@ -30,6 +37,8 @@ create table if not exists public.profiles (
   availability_start date,
   portfolio_links text[] not null default '{}'::text[],
   bio text not null default '',
+  marketing_data_consent boolean not null default false,
+  ads_receive_consent boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -41,10 +50,77 @@ for each row execute function public.set_updated_at();
 
 alter table if exists public.profiles
   add column if not exists public_code text;
+alter table if exists public.profiles
+  add column if not exists email_verified_at timestamptz;
+alter table if exists public.profiles
+  add column if not exists gender text;
+alter table if exists public.profiles
+  add column if not exists age integer;
+alter table if exists public.profiles
+  add column if not exists marketing_data_consent boolean;
+alter table if exists public.profiles
+  add column if not exists ads_receive_consent boolean;
+
+update public.profiles
+set marketing_data_consent = coalesce(marketing_data_consent, false),
+    ads_receive_consent = coalesce(ads_receive_consent, false);
+
+alter table if exists public.profiles
+  alter column marketing_data_consent set default false;
+alter table if exists public.profiles
+  alter column ads_receive_consent set default false;
+alter table if exists public.profiles
+  alter column marketing_data_consent set not null;
+alter table if exists public.profiles
+  alter column ads_receive_consent set not null;
+
+update public.profiles
+set email_verified_at = coalesce(email_verified_at, created_at, now())
+where email_verified_at is null;
 
 create index if not exists idx_profiles_email on public.profiles (email);
 create index if not exists idx_profiles_username on public.profiles (username);
 create unique index if not exists idx_profiles_public_code on public.profiles (public_code) where public_code is not null;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'profiles_gender_check'
+  ) then
+    alter table public.profiles
+      add constraint profiles_gender_check
+      check (gender is null or gender in ('male', 'female', 'other'));
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'profiles_age_check'
+  ) then
+    alter table public.profiles
+      add constraint profiles_age_check
+      check (age is null or (age >= 1 and age <= 120));
+  end if;
+end $$;
+
+-- SIGNUP EMAIL CODES
+create table if not exists public.signup_email_codes (
+  id uuid primary key default gen_random_uuid(),
+  email text not null,
+  code_hash text not null,
+  expires_at timestamptz not null,
+  verified_at timestamptz,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_signup_email_codes_email_created on public.signup_email_codes (email, created_at desc);
+create index if not exists idx_signup_email_codes_expires on public.signup_email_codes (expires_at);
 
 -- TEAMS
 create table if not exists public.teams (
@@ -101,6 +177,19 @@ create table if not exists public.chat_requests (
 create index if not exists idx_chat_requests_to on public.chat_requests (to_user_id);
 create index if not exists idx_chat_requests_pair on public.chat_requests (from_user_id, to_user_id);
 create index if not exists idx_chat_requests_status on public.chat_requests (status);
+
+create table if not exists public.friend_requests (
+  request_id text primary key,
+  from_user_id text not null references public.profiles(user_id) on delete cascade,
+  to_user_id text not null references public.profiles(user_id) on delete cascade,
+  message text not null default '',
+  status text not null default 'PENDING' check (status in ('PENDING', 'ACCEPTED', 'DECLINED')),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_friend_requests_to on public.friend_requests (to_user_id);
+create index if not exists idx_friend_requests_pair on public.friend_requests (from_user_id, to_user_id);
+create index if not exists idx_friend_requests_status on public.friend_requests (status);
 
 create table if not exists public.team_invites (
   invite_id text primary key,
@@ -313,6 +402,97 @@ create index if not exists idx_audit_logs_target_user on public.audit_logs (targ
 create index if not exists idx_audit_logs_team on public.audit_logs (team_id);
 create index if not exists idx_audit_logs_category on public.audit_logs (category);
 
+-- UX ANALYTICS
+create table if not exists public.ux_actions (
+  action_key text primary key,
+  area text not null check (area in ('nav', 'discovery', 'friends', 'my_team', 'profile')),
+  action_name text not null,
+  sort_order integer not null default 1000,
+  is_active boolean not null default true
+);
+
+create table if not exists public.ux_click_events (
+  id bigint generated always as identity primary key,
+  action_key text not null references public.ux_actions(action_key) on update cascade on delete restrict,
+  user_id text references public.profiles(user_id) on delete set null,
+  context jsonb not null default '{}'::jsonb,
+  clicked_at timestamptz not null default now()
+);
+
+create index if not exists idx_ux_click_events_action on public.ux_click_events (action_key);
+create index if not exists idx_ux_click_events_clicked_at on public.ux_click_events (clicked_at desc);
+create index if not exists idx_ux_click_events_user on public.ux_click_events (user_id);
+
+create or replace view public.ux_nav_counts
+with (security_invoker = true)
+as
+select
+  a.action_key,
+  a.action_name,
+  a.sort_order,
+  coalesce(count(e.id), 0)::bigint as click_count,
+  max(e.clicked_at) as last_clicked_at
+from public.ux_actions a
+left join public.ux_click_events e on e.action_key = a.action_key
+where a.area = 'nav' and a.is_active = true
+group by a.action_key, a.action_name, a.sort_order;
+
+create or replace view public.ux_discovery_counts
+with (security_invoker = true)
+as
+select
+  a.action_key,
+  a.action_name,
+  a.sort_order,
+  coalesce(count(e.id), 0)::bigint as click_count,
+  max(e.clicked_at) as last_clicked_at
+from public.ux_actions a
+left join public.ux_click_events e on e.action_key = a.action_key
+where a.area = 'discovery' and a.is_active = true
+group by a.action_key, a.action_name, a.sort_order;
+
+create or replace view public.ux_friends_counts
+with (security_invoker = true)
+as
+select
+  a.action_key,
+  a.action_name,
+  a.sort_order,
+  coalesce(count(e.id), 0)::bigint as click_count,
+  max(e.clicked_at) as last_clicked_at
+from public.ux_actions a
+left join public.ux_click_events e on e.action_key = a.action_key
+where a.area = 'friends' and a.is_active = true
+group by a.action_key, a.action_name, a.sort_order;
+
+create or replace view public.ux_my_team_counts
+with (security_invoker = true)
+as
+select
+  a.action_key,
+  a.action_name,
+  a.sort_order,
+  coalesce(count(e.id), 0)::bigint as click_count,
+  max(e.clicked_at) as last_clicked_at
+from public.ux_actions a
+left join public.ux_click_events e on e.action_key = a.action_key
+where a.area = 'my_team' and a.is_active = true
+group by a.action_key, a.action_name, a.sort_order;
+
+create or replace view public.ux_profile_counts
+with (security_invoker = true)
+as
+select
+  a.action_key,
+  a.action_name,
+  a.sort_order,
+  coalesce(count(e.id), 0)::bigint as click_count,
+  max(e.clicked_at) as last_clicked_at
+from public.ux_actions a
+left join public.ux_click_events e on e.action_key = a.action_key
+where a.area = 'profile' and a.is_active = true
+group by a.action_key, a.action_name, a.sort_order;
+
 -- RLS (Row Level Security)
 -- Current app architecture uses server-side API routes with service-role key.
 -- Enabling RLS removes Supabase security warnings and blocks direct anon/auth access
@@ -321,6 +501,7 @@ alter table if exists public.profiles enable row level security;
 alter table if exists public.teams enable row level security;
 alter table if exists public.team_members enable row level security;
 alter table if exists public.chat_requests enable row level security;
+alter table if exists public.friend_requests enable row level security;
 alter table if exists public.team_invites enable row level security;
 alter table if exists public.join_requests enable row level security;
 alter table if exists public.file_share_requests enable row level security;
@@ -334,11 +515,15 @@ alter table if exists public.workspace_meeting_notes enable row level security;
 alter table if exists public.workspace_agreement_notes enable row level security;
 alter table if exists public.workspace_comments enable row level security;
 alter table if exists public.audit_logs enable row level security;
+alter table if exists public.signup_email_codes enable row level security;
+alter table if exists public.ux_actions enable row level security;
+alter table if exists public.ux_click_events enable row level security;
 
 alter table if exists public.profiles force row level security;
 alter table if exists public.teams force row level security;
 alter table if exists public.team_members force row level security;
 alter table if exists public.chat_requests force row level security;
+alter table if exists public.friend_requests force row level security;
 alter table if exists public.team_invites force row level security;
 alter table if exists public.join_requests force row level security;
 alter table if exists public.file_share_requests force row level security;
@@ -352,12 +537,16 @@ alter table if exists public.workspace_meeting_notes force row level security;
 alter table if exists public.workspace_agreement_notes force row level security;
 alter table if exists public.workspace_comments force row level security;
 alter table if exists public.audit_logs force row level security;
+alter table if exists public.signup_email_codes force row level security;
+alter table if exists public.ux_actions force row level security;
+alter table if exists public.ux_click_events force row level security;
 
 -- Explicit privilege hardening for direct anon/auth API access.
 revoke all on table public.profiles from anon, authenticated;
 revoke all on table public.teams from anon, authenticated;
 revoke all on table public.team_members from anon, authenticated;
 revoke all on table public.chat_requests from anon, authenticated;
+revoke all on table public.friend_requests from anon, authenticated;
 revoke all on table public.team_invites from anon, authenticated;
 revoke all on table public.join_requests from anon, authenticated;
 revoke all on table public.file_share_requests from anon, authenticated;
@@ -371,6 +560,9 @@ revoke all on table public.workspace_meeting_notes from anon, authenticated;
 revoke all on table public.workspace_agreement_notes from anon, authenticated;
 revoke all on table public.workspace_comments from anon, authenticated;
 revoke all on table public.audit_logs from anon, authenticated;
+revoke all on table public.signup_email_codes from anon, authenticated;
+revoke all on table public.ux_actions from anon, authenticated;
+revoke all on table public.ux_click_events from anon, authenticated;
 
 -- Realtime-safe table only: audit_logs (minimal metadata, no source payload rows).
 grant select on table public.audit_logs to anon, authenticated;

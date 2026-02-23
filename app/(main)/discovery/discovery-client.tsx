@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,7 @@ import { AlertModal } from "@/components/ui/modal";
 import CreateTeamModal from "@/components/teams/CreateTeamModal";
 import { Globe, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { trackUxClick } from "@/lib/ux/client";
 
 interface DiscoveryClientPageProps {
     initialSearchQuery?: string;
@@ -24,7 +26,6 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
     const [activeTab, setActiveTab] = useState<"teams" | "people">("teams");
     const [teams, setTeams] = useState<any[]>([]);
     const [people, setPeople] = useState<any[]>([]);
-    const [myTeams, setMyTeams] = useState<Array<{ teamId: string; name: string }> | null>(null);
     const [loading, setLoading] = useState(true);
     const [notice, setNotice] = useState<{ open: boolean; title: string; message: string }>({
         open: false,
@@ -35,22 +36,16 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
     const [profileMenu, setProfileMenu] = useState<ContextMenuState | null>(null);
     const [composer, setComposer] = useState<{
         isOpen: boolean;
-        mode: "CHAT" | "INVITE" | "JOIN";
         toUserId: string;
         toUsername: string;
         message: string;
-        selectedTeamId: string;
-        teamOptions: Array<{ teamId: string; name: string }>;
         isSubmitting: boolean;
         error: string;
     }>({
         isOpen: false,
-        mode: "CHAT",
         toUserId: "",
         toUsername: "",
         message: "",
-        selectedTeamId: "",
-        teamOptions: [],
         isSubmitting: false,
         error: "",
     });
@@ -64,6 +59,10 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
     const searchQuery = useMemo(() => initialSearchQuery.trim(), [initialSearchQuery]);
     const normalizedSearchQuery = normalizeSearchValue(searchQuery);
     const isSearching = normalizedSearchQuery.length > 0;
+    const searchTokens = useMemo(
+        () => normalizedSearchQuery.split(" ").filter(Boolean),
+        [normalizedSearchQuery]
+    );
 
     const normalizeShortMessage = (value: string, fallback: string) => {
         const trimmed = value.trim().replace(/\s+/g, " ");
@@ -79,13 +78,13 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
         });
     };
 
-    const getMyTeams = async () => {
-        if (myTeams) return myTeams;
-        const res = await fetch("/api/chat/teams");
-        if (!res.ok) throw new Error("Failed to load your teams.");
-        const data = (await res.json()) as Array<{ teamId: string; name: string }>;
-        setMyTeams(data);
-        return data;
+    const trackDiscoveryAction = (actionKey: string, context?: Record<string, unknown>) => {
+        trackUxClick(actionKey, {
+            page: "discovery",
+            activeTab,
+            searching: isSearching,
+            ...context,
+        });
     };
 
     const fetchData = useCallback(async () => {
@@ -178,65 +177,26 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
     const viewProfileFromMenu = () => {
         if (!profileMenu) return;
         if (profileMenu.kind === "team") {
+            trackDiscoveryAction("discovery.open_team_profile", { teamId: profileMenu.id, source: "context_menu" });
             router.push(`/teams/${encodeURIComponent(profileMenu.id)}`);
             setProfileMenu(null);
             return;
         }
+        trackDiscoveryAction("discovery.open_user_profile", { userId: profileMenu.id, source: "context_menu" });
         router.push(`/people/${encodeURIComponent(profileMenu.id)}`);
         setProfileMenu(null);
-    };
-
-    const openChatComposer = (person: any) => {
-        setComposer({
-            isOpen: true,
-            mode: "CHAT",
-            toUserId: person.userId,
-            toUsername: person.username || "User",
-            message: "Let's chat!",
-            selectedTeamId: "",
-            teamOptions: [],
-            isSubmitting: false,
-            error: "",
-        });
-    };
-
-    const openInviteComposer = async (person: any) => {
-        try {
-            const options = await getMyTeams();
-            if (!options.length) {
-                openNotice("Invite unavailable", "You need at least one team to send an invite.");
-                return;
-            }
-
-            setComposer({
-                isOpen: true,
-                mode: "INVITE",
-                toUserId: person.userId,
-                toUsername: person.username || "User",
-                message: "I'd like to invite you to my team.",
-                selectedTeamId: options[0].teamId,
-                teamOptions: options,
-                isSubmitting: false,
-                error: "",
-            });
-        } catch (error) {
-            console.error(error);
-            openNotice("Failed to load teams", "Please try again in a moment.");
-        }
     };
 
     const openJoinComposer = (team: any) => {
         const teamId = String(team?.teamId || "").trim();
         if (!teamId) return;
+        trackDiscoveryAction("discovery.team_request", { teamId });
 
         setComposer({
             isOpen: true,
-            mode: "JOIN",
             toUserId: teamId,
             toUsername: team?.name || "Team",
             message: "I'd like to join your team.",
-            selectedTeamId: "",
-            teamOptions: [],
             isSubmitting: false,
             error: "",
         });
@@ -245,38 +205,19 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
     const submitComposer = async () => {
         if (!composer.isOpen || composer.isSubmitting) return;
 
-        const fallback =
-            composer.mode === "CHAT"
-                ? "Let's chat!"
-                : composer.mode === "INVITE"
-                  ? "I'd like to invite you to my team."
-                  : "I'd like to join your team.";
+        const fallback = "I'd like to join your team.";
         const message = normalizeShortMessage(composer.message, fallback);
-        if (composer.mode === "INVITE" && !composer.selectedTeamId) {
-            setComposer((prev) => ({ ...prev, error: "Please select a team." }));
-            return;
-        }
 
         setComposer((prev) => ({ ...prev, isSubmitting: true, error: "" }));
 
         try {
-            const body =
-                composer.mode === "CHAT"
-                    ? { type: "CHAT", toId: composer.toUserId, message }
-                    : composer.mode === "INVITE"
-                      ? {
-                        type: "INVITE",
-                        toId: composer.toUserId,
-                        teamId: composer.selectedTeamId,
-                        message,
-                      }
-                      : {
-                        type: "JOIN",
-                        toId: composer.toUserId,
-                        teamId: composer.toUserId,
-                        message,
-                        answers: { a1: message, a2: "" },
-                      };
+            const body = {
+                type: "JOIN",
+                toId: composer.toUserId,
+                teamId: composer.toUserId,
+                message,
+                answers: { a1: message, a2: "" },
+            };
 
             const res = await fetch("/api/requests", {
                 method: "POST",
@@ -286,52 +227,28 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
             const data = await res.json().catch(() => ({}));
 
             if (res.ok) {
-                if (composer.mode === "CHAT") {
-                    setPeople((prev) =>
-                        prev.map((person) =>
-                            person.userId === composer.toUserId
-                                ? { ...person, canRequestChat: false, chatState: "PENDING" }
-                                : person
-                        )
-                    );
-                } else if (composer.mode === "JOIN") {
-                    setTeams((prev) =>
-                        prev.map((team) =>
-                            team.teamId === composer.toUserId
-                                ? { ...team, isJoinRequested: true }
-                                : team
-                        )
-                    );
-                    openNotice("Request sent", "Your join request has been sent.");
-                }
+                setTeams((prev) =>
+                    prev.map((team) =>
+                        team.teamId === composer.toUserId
+                            ? { ...team, isJoinRequested: true }
+                            : team
+                    )
+                );
+                openNotice("Request sent", "Your join request has been sent.");
                 setComposer((prev) => ({ ...prev, isOpen: false, isSubmitting: false, error: "" }));
                 return;
             }
 
             if (res.status === 409) {
-                if (composer.mode === "CHAT") {
-                    await fetchData();
-                    openNotice("Already requested", data.error || "A chat request already exists.");
-                    setComposer((prev) => ({ ...prev, isOpen: false, isSubmitting: false, error: "" }));
-                    return;
-                }
-                if (composer.mode === "JOIN") {
-                    setTeams((prev) =>
-                        prev.map((team) =>
-                            team.teamId === composer.toUserId
-                                ? { ...team, isJoinRequested: true }
-                                : team
-                        )
-                    );
-                    openNotice("Already requested", data.error || "A join request already exists for this team.");
-                    setComposer((prev) => ({ ...prev, isOpen: false, isSubmitting: false, error: "" }));
-                    return;
-                }
-                setComposer((prev) => ({
-                    ...prev,
-                    isSubmitting: false,
-                    error: data.error || "An active request already exists.",
-                }));
+                setTeams((prev) =>
+                    prev.map((team) =>
+                        team.teamId === composer.toUserId
+                            ? { ...team, isJoinRequested: true }
+                            : team
+                    )
+                );
+                openNotice("Already requested", data.error || "A join request already exists for this team.");
+                setComposer((prev) => ({ ...prev, isOpen: false, isSubmitting: false, error: "" }));
                 return;
             }
 
@@ -359,9 +276,9 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
             ]
                 .filter(Boolean)
                 .map((value) => normalizeSearchValue(value));
-            return candidates.some((value) => value === normalizedSearchQuery);
+            return searchTokens.every((token) => candidates.some((value) => value.includes(token)));
         });
-    }, [teams, normalizedSearchQuery]);
+    }, [teams, normalizedSearchQuery, searchTokens]);
 
     const filteredPeople = useMemo(() => {
         if (!normalizedSearchQuery) return people;
@@ -377,9 +294,9 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
             ]
                 .filter(Boolean)
                 .map((value) => normalizeSearchValue(value));
-            return candidates.some((value) => value === normalizedSearchQuery);
+            return searchTokens.every((token) => candidates.some((value) => value.includes(token)));
         });
-    }, [people, normalizedSearchQuery]);
+    }, [people, normalizedSearchQuery, searchTokens]);
 
     return (
         <>
@@ -399,7 +316,13 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                             <p className="text-[var(--muted)]">Explore teams and people.</p>
                         </div>
                         {activeTab === "teams" && (
-                            <Button onClick={() => setIsCreateTeamOpen(true)} className="hover:brightness-90 active:brightness-85">
+                            <Button
+                                onClick={() => {
+                                    trackDiscoveryAction("discovery.create_team");
+                                    setIsCreateTeamOpen(true);
+                                }}
+                                className="hover:brightness-90 active:brightness-85"
+                            >
                                 <Plus className="w-4 h-4 mr-2" />
                                 Create Team
                             </Button>
@@ -409,7 +332,10 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                     <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
                         <div className="flex gap-4">
                             <button
-                                onClick={() => setActiveTab("teams")}
+                                onClick={() => {
+                                    trackDiscoveryAction("discovery.tab_team");
+                                    setActiveTab("teams");
+                                }}
                                 className={cn(
                                     "text-sm font-medium transition-colors pb-1 border-b-2",
                                     activeTab === "teams" ? "text-[var(--primary)] border-[var(--primary)]" : "text-[var(--muted)] border-transparent hover:text-[var(--fg)]"
@@ -418,7 +344,10 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                                 Teams
                             </button>
                             <button
-                                onClick={() => setActiveTab("people")}
+                                onClick={() => {
+                                    trackDiscoveryAction("discovery.tab_people");
+                                    setActiveTab("people");
+                                }}
                                 className={cn(
                                     "text-sm font-medium transition-colors pb-1 border-b-2",
                                     activeTab === "people" ? "text-[var(--primary)] border-[var(--primary)]" : "text-[var(--muted)] border-transparent hover:text-[var(--fg)]"
@@ -462,33 +391,44 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                                             {team.name}
                                         </p>
                                         <p className="text-sm text-[var(--muted)] mt-1 line-clamp-2 h-10">{team.description}</p>
-                                        {team.isJoined ? (
-                                            <span className="w-full mt-4 h-9 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
-                                                Already Joined
-                                            </span>
-                                        ) : team.isJoinRequested ? (
-                                            <span className="w-full mt-4 h-9 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
-                                                Requested
-                                            </span>
-                                        ) : (
-                                            <Button
-                                                className="w-full mt-4"
-                                                variant="secondary"
-                                                size="sm"
-                                                onClick={() => openJoinComposer(team)}
-                                                disabled={
-                                                    composer.isSubmitting &&
-                                                    composer.mode === "JOIN" &&
-                                                    composer.toUserId === team.teamId
+                                        <div className="mt-4 flex items-center gap-2">
+                                            <Link
+                                                href={`/teams/${encodeURIComponent(team.teamId)}`}
+                                                onClick={() =>
+                                                    trackDiscoveryAction("discovery.open_team_profile", {
+                                                        teamId: team.teamId,
+                                                    })
                                                 }
+                                                className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                             >
-                                                {composer.isSubmitting &&
-                                                composer.mode === "JOIN" &&
-                                                composer.toUserId === team.teamId
-                                                    ? "Applying..."
-                                                    : "Apply to Join"}
-                                            </Button>
-                                        )}
+                                                Profile
+                                            </Link>
+                                            {team.isJoined ? (
+                                                <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
+                                                    Already Joined
+                                                </span>
+                                            ) : team.isJoinRequested ? (
+                                                <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
+                                                    Requested
+                                                </span>
+                                            ) : (
+                                                <Button
+                                                    className="flex-1"
+                                                    variant="secondary"
+                                                    size="sm"
+                                                    onClick={() => openJoinComposer(team)}
+                                                    disabled={
+                                                        composer.isSubmitting &&
+                                                        composer.toUserId === team.teamId
+                                                    }
+                                                >
+                                                    {composer.isSubmitting &&
+                                                    composer.toUserId === team.teamId
+                                                        ? "Applying..."
+                                                        : "Apply to Join"}
+                                                </Button>
+                                            )}
+                                        </div>
                                     </Card>
                                     );
                                 })}
@@ -538,29 +478,18 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
 
                                         <div className="flex justify-between items-center text-xs text-[var(--muted)] border-t border-[var(--border)] pt-3">
                                             <span>{person.availabilityHours || "Hours not set"} / week</span>
-                                            <div className="flex gap-2">
-                                                {person.canRequestChat !== false ? (
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    className="h-7 text-xs px-3 text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
-                                                    onClick={() => openChatComposer(person)}
+                                            <div className="flex">
+                                                <Link
+                                                    href={`/people/${encodeURIComponent(person.userId)}`}
+                                                    onClick={() =>
+                                                        trackDiscoveryAction("discovery.open_user_profile", {
+                                                            userId: person.userId,
+                                                        })
+                                                    }
+                                                    className="h-7 px-3 inline-flex items-center rounded border border-[var(--border)] text-[11px] text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                                 >
-                                                    Chat
-                                                </Button>
-                                                ) : (
-                                                    <span className="h-7 px-3 inline-flex items-center rounded border border-[var(--border)] text-[10px] font-medium text-[var(--muted)]">
-                                                        {person.chatState === "ACCEPTED" ? "Connected" : "Requested"}
-                                                    </span>
-                                                )}
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    className="h-7 text-xs px-3 text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
-                                                    onClick={() => void openInviteComposer(person)}
-                                                >
-                                                    Invite
-                                                </Button>
+                                                    Profile
+                                                </Link>
                                             </div>
                                         </div>
                                     </Card>
@@ -592,33 +521,44 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                                     {team.name}
                                 </p>
                                 <p className="text-sm text-[var(--muted)] mt-1 line-clamp-2 h-10">{team.description}</p>
-                                {team.isJoined ? (
-                                    <span className="w-full mt-4 h-9 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
-                                        Already Joined
-                                    </span>
-                                ) : team.isJoinRequested ? (
-                                    <span className="w-full mt-4 h-9 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
-                                        Requested
-                                    </span>
-                                ) : (
-                                    <Button
-                                        className="w-full mt-4"
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={() => openJoinComposer(team)}
-                                        disabled={
-                                            composer.isSubmitting &&
-                                            composer.mode === "JOIN" &&
-                                            composer.toUserId === team.teamId
+                                <div className="mt-4 flex items-center gap-2">
+                                    <Link
+                                        href={`/teams/${encodeURIComponent(team.teamId)}`}
+                                        onClick={() =>
+                                            trackDiscoveryAction("discovery.open_team_profile", {
+                                                teamId: team.teamId,
+                                            })
                                         }
+                                        className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                     >
-                                        {composer.isSubmitting &&
-                                        composer.mode === "JOIN" &&
-                                        composer.toUserId === team.teamId
-                                            ? "Applying..."
-                                            : "Apply to Join"}
-                                    </Button>
-                                )}
+                                        Profile
+                                    </Link>
+                                    {team.isJoined ? (
+                                        <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
+                                            Already Joined
+                                        </span>
+                                    ) : team.isJoinRequested ? (
+                                        <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
+                                            Requested
+                                        </span>
+                                    ) : (
+                                        <Button
+                                            className="flex-1"
+                                            variant="secondary"
+                                            size="sm"
+                                            onClick={() => openJoinComposer(team)}
+                                            disabled={
+                                                composer.isSubmitting &&
+                                                composer.toUserId === team.teamId
+                                            }
+                                        >
+                                            {composer.isSubmitting &&
+                                            composer.toUserId === team.teamId
+                                                ? "Applying..."
+                                                : "Apply to Join"}
+                                        </Button>
+                                    )}
+                                </div>
                             </Card>
                             );
                         }))
@@ -674,29 +614,18 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
 
                                 <div className="flex justify-between items-center text-xs text-[var(--muted)] border-t border-[var(--border)] pt-3">
                                     <span>{person.availabilityHours || "Hours not set"} / week</span>
-                                    <div className="flex gap-2">
-                                        {person.canRequestChat !== false ? (
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            className="h-7 text-xs px-3 text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
-                                            onClick={() => openChatComposer(person)}
+                                    <div className="flex">
+                                        <Link
+                                            href={`/people/${encodeURIComponent(person.userId)}`}
+                                            onClick={() =>
+                                                trackDiscoveryAction("discovery.open_user_profile", {
+                                                    userId: person.userId,
+                                                })
+                                            }
+                                            className="h-7 px-3 inline-flex items-center rounded border border-[var(--border)] text-[11px] text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                         >
-                                            Chat
-                                        </Button>
-                                        ) : (
-                                            <span className="h-7 px-3 inline-flex items-center rounded border border-[var(--border)] text-[10px] font-medium text-[var(--muted)]">
-                                                {person.chatState === "ACCEPTED" ? "Connected" : "Requested"}
-                                            </span>
-                                        )}
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            className="h-7 text-xs px-3 text-[var(--fg)] hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)]"
-                                            onClick={() => void openInviteComposer(person)}
-                                        >
-                                            Invite
-                                        </Button>
+                                            Profile
+                                        </Link>
                                     </div>
                                 </div>
                             </Card>
@@ -715,40 +644,15 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                     }
                 }}
             >
-                <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] shadow-2xl">
-                    <div className="px-5 py-4 border-b border-[var(--border)]">
-                        <h3 className="text-base font-semibold text-[var(--fg)]">
-                            {composer.mode === "CHAT"
-                                ? "Send Chat Request"
-                                : composer.mode === "INVITE"
-                                  ? "Send Team Invite"
-                                  : "Apply to Join"}
-                        </h3>
-                        <p className="text-xs text-[var(--muted)] mt-1 truncate">
-                            {composer.mode === "JOIN" ? "Team" : "To"}: {composer.toUsername}
-                        </p>
-                    </div>
+                    <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] shadow-2xl">
+                        <div className="px-5 py-4 border-b border-[var(--border)]">
+                            <h3 className="text-base font-semibold text-[var(--fg)]">Apply to Join</h3>
+                            <p className="text-xs text-[var(--muted)] mt-1 truncate">
+                                Team: {composer.toUsername}
+                            </p>
+                        </div>
 
                     <div className="px-5 py-4 space-y-3">
-                        {composer.mode === "INVITE" && (
-                            <div className="space-y-1">
-                                <label className="text-xs text-[var(--muted)]">Team</label>
-                                <select
-                                    value={composer.selectedTeamId}
-                                    onChange={(event) =>
-                                        setComposer((prev) => ({ ...prev, selectedTeamId: event.target.value }))
-                                    }
-                                    className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 text-sm text-[var(--fg)] focus:outline-none"
-                                >
-                                    {composer.teamOptions.map((team) => (
-                                        <option key={team.teamId} value={team.teamId}>
-                                            {team.name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
-
                         <div className="space-y-1">
                             <label className="text-xs text-[var(--muted)]">Message</label>
                             <textarea
@@ -758,13 +662,7 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                                 }
                                 rows={4}
                                 className="w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
-                                placeholder={
-                                    composer.mode === "CHAT"
-                                        ? "Write a short chat request..."
-                                        : composer.mode === "INVITE"
-                                          ? "Write a short invite message..."
-                                          : "Write a short join request..."
-                                }
+                                placeholder="Write a short join request..."
                             />
                             <div className="text-[10px] text-[var(--muted)] text-right">
                                 {composer.message.length}/160

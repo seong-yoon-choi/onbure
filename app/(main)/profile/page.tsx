@@ -1,16 +1,20 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { useSession } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { User as UserIcon, Save, Loader2, Pencil, X } from "lucide-react";
 import { useTheme } from "@/components/providers";
 import { AlertModal, ConfirmModal } from "@/components/ui/modal";
+import { trackUxClick } from "@/lib/ux/client";
+import { ALL_SIGNUP_COUNTRIES } from "@/lib/signup-consent";
 
 interface UserProfile {
     username: string;
     publicCode: string;
     email: string;
+    gender: "male" | "female" | "other" | "";
+    age: string;
     country: string;
     language: string;
     skills: string[];
@@ -37,6 +41,8 @@ function normalizeProfileForCompare(profile: UserProfile): UserProfile {
         ...profile,
         username: profile.username.trim(),
         email: profile.email.trim(),
+        gender: profile.gender || "",
+        age: String(profile.age || "").trim(),
         country: profile.country || "",
         language: profile.language || "",
         skills: profile.skills.map((skill) => skill.trim()).filter(Boolean),
@@ -67,17 +73,31 @@ export default function ProfilePage() {
     });
     const [leaveModalOpen, setLeaveModalOpen] = useState(false);
     const [pendingLeaveHref, setPendingLeaveHref] = useState<string | null>(null);
+    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [deleteReason, setDeleteReason] = useState("");
+    const [deletePassword, setDeletePassword] = useState("");
+    const [deleteError, setDeleteError] = useState("");
+    const [isDeleting, setIsDeleting] = useState(false);
     const [profile, setProfile] = useState<UserProfile>({
         username: "",
         publicCode: "",
         email: "",
+        gender: "",
+        age: "",
         country: "",
         language: "",
         skills: [],
         availabilityHours: "",
         bio: "",
-        portfolioLinks: []
+        portfolioLinks: [],
     });
+
+    const trackProfileAction = (actionKey: string, context?: Record<string, unknown>) => {
+        trackUxClick(actionKey, {
+            page: "my_profile",
+            ...context,
+        });
+    };
 
     useEffect(() => {
         if (status === "unauthenticated") {
@@ -98,12 +118,17 @@ export default function ProfilePage() {
                     username: data.username || data.name || "",
                     publicCode: data.publicCode || "",
                     email: data.email || "",
+                    gender:
+                        data.gender === "male" || data.gender === "female" || data.gender === "other"
+                            ? data.gender
+                            : "",
+                    age: Number.isFinite(data.age) ? String(data.age) : "",
                     country: data.country || "KR",
                     language: data.language || "ko",
                     skills: data.skills || [],
                     availabilityHours: data.availabilityHours || "40+",
                     bio: data.bio || "",
-                    portfolioLinks: data.portfolioLinks || []
+                    portfolioLinks: data.portfolioLinks || [],
                 };
                 setProfile(loadedProfile);
                 setInitialProfile(loadedProfile);
@@ -156,13 +181,20 @@ export default function ProfilePage() {
     }, [isDirty]);
 
     const handleSave = async () => {
+        trackProfileAction("profile.save_change");
         setIsSaving(true);
         try {
-            const payload: UserProfile = {
+            const nextProfile: UserProfile = {
                 ...profile,
                 email: profile.email.trim(),
                 skills: profile.skills.map((skill) => skill.trim()).filter(Boolean),
                 portfolioLinks: profile.portfolioLinks.map((link) => link.trim()).filter(Boolean),
+            };
+            const parsedAge = Number.parseInt(String(nextProfile.age || "").trim(), 10);
+            const payload = {
+                ...nextProfile,
+                gender: nextProfile.gender || null,
+                age: Number.isFinite(parsedAge) ? parsedAge : null,
             };
             const res = await fetch("/api/profile", {
                 method: "PATCH",
@@ -171,8 +203,8 @@ export default function ProfilePage() {
             });
 
             if (!res.ok) throw new Error("Failed to save");
-            setProfile(payload);
-            setInitialProfile(payload);
+            setProfile(nextProfile);
+            setInitialProfile(nextProfile);
             setNotice({
                 open: true,
                 title: "Profile updated",
@@ -196,6 +228,9 @@ export default function ProfilePage() {
 
     const commitUsernameEdit = () => {
         const trimmed = usernameDraft.trim();
+        if (trimmed && trimmed !== profile.username) {
+            trackProfileAction("profile.change_name");
+        }
         setProfile((prev) => ({ ...prev, username: trimmed || prev.username }));
         setIsUsernameEditing(false);
     };
@@ -216,6 +251,9 @@ export default function ProfilePage() {
             setEmailDraft(profile.email || "");
             setIsEmailEditing(false);
             return;
+        }
+        if (trimmed !== profile.email) {
+            trackProfileAction("profile.change_email");
         }
         setProfile((prev) => ({ ...prev, email: trimmed }));
         setIsEmailEditing(false);
@@ -272,6 +310,53 @@ export default function ProfilePage() {
         }
 
         window.location.href = destination.href;
+    };
+
+    const openDeleteModal = () => {
+        setDeleteReason("");
+        setDeletePassword("");
+        setDeleteError("");
+        setDeleteModalOpen(true);
+    };
+
+    const closeDeleteModal = () => {
+        if (isDeleting) return;
+        setDeleteModalOpen(false);
+        setDeleteError("");
+        setDeletePassword("");
+    };
+
+    const confirmDeleteAccount = async () => {
+        if (isDeleting) return;
+        if (!deletePassword) {
+            setDeleteError("Password is required.");
+            return;
+        }
+        trackProfileAction("profile.delete_account");
+        setIsDeleting(true);
+        setDeleteError("");
+
+        try {
+            const res = await fetch("/api/profile", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    reason: deleteReason.trim(),
+                    password: deletePassword,
+                }),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(payload?.error || "Failed to delete account.");
+            }
+
+            setDeleteModalOpen(false);
+            await signOut({ callbackUrl: "/register" });
+        } catch (error: any) {
+            setDeleteError(error?.message || "Failed to delete account.");
+        } finally {
+            setIsDeleting(false);
+        }
     };
 
     if (isLoading) {
@@ -381,15 +466,57 @@ export default function ProfilePage() {
                     </div>
 
                     <div className="space-y-2">
+                        <label className="text-sm text-[var(--muted)]">Gender</label>
+                        <select
+                            value={profile.gender}
+                            onChange={(e) =>
+                                setProfile({
+                                    ...profile,
+                                    gender: (e.target.value as "male" | "female" | "other" | "") || "",
+                                })
+                            }
+                            className={fieldClass}
+                        >
+                            <option value="">Select gender</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-sm text-[var(--muted)]">Age</label>
+                        <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            maxLength={3}
+                            value={profile.age}
+                            onChange={(e) => {
+                                const raw = e.target.value;
+                                const normalized = raw.replace(/[^\d]/g, "").replace(/^0+(\d)/, "$1");
+                                setProfile({
+                                    ...profile,
+                                    age: normalized,
+                                });
+                            }}
+                            className={fieldClass}
+                            placeholder="Enter age"
+                        />
+                    </div>
+
+                    <div className="space-y-2">
                         <label className="text-sm text-[var(--muted)]">Country *</label>
                         <select
                             value={profile.country}
                             onChange={(e) => setProfile({ ...profile, country: e.target.value })}
                             className={fieldClass}
                         >
-                            <option value="KR">South Korea</option>
-                            <option value="US">United States</option>
-                            <option value="JP">Japan</option>
+                            {ALL_SIGNUP_COUNTRIES.map((item) => (
+                                <option key={item.code} value={item.code}>
+                                    {item.label}
+                                </option>
+                            ))}
                         </select>
                     </div>
 
@@ -534,6 +661,20 @@ export default function ProfilePage() {
                     </div>
                 </div>
             </div>
+
+            <section className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-5">
+                <h3 className="text-sm font-semibold text-rose-500 uppercase tracking-wide">Danger Zone</h3>
+                <p className="mt-2 text-sm text-[var(--muted)]">
+                    Delete your account and related personal data. This cannot be undone.
+                </p>
+                <button
+                    type="button"
+                    onClick={openDeleteModal}
+                    className="mt-4 inline-flex items-center rounded-md border border-rose-500/40 px-3 py-2 text-sm font-medium text-rose-500 hover:bg-rose-500/10 transition-colors"
+                >
+                    Delete Account
+                </button>
+            </section>
         </div>
         <AlertModal
             open={notice.open}
@@ -551,6 +692,47 @@ export default function ProfilePage() {
             onConfirm={confirmLeave}
             onCancel={cancelLeave}
         />
+        <ConfirmModal
+            open={deleteModalOpen}
+            title="계정 삭제"
+            message="정말 삭제하시겠습니까? 삭제 후에는 되돌릴 수 없습니다."
+            confirmLabel={isDeleting ? "삭제 중..." : "삭제"}
+            cancelLabel="취소"
+            confirmVariant="destructive"
+            isProcessing={isDeleting}
+            onConfirm={() => {
+                void confirmDeleteAccount();
+            }}
+            onCancel={closeDeleteModal}
+        >
+            <div className="space-y-2">
+                <label className="text-xs font-medium text-[var(--muted)] uppercase tracking-wider ml-1">
+                    삭제 이유 (선택)
+                </label>
+                <textarea
+                    value={deleteReason}
+                    onChange={(event) => setDeleteReason(event.target.value)}
+                    rows={3}
+                    placeholder="입력하지 않아도 삭제할 수 있습니다."
+                    className={fieldClass}
+                />
+                <label className="text-xs font-medium text-[var(--muted)] uppercase tracking-wider ml-1">
+                    비밀번호 (필수)
+                </label>
+                <input
+                    type="password"
+                    value={deletePassword}
+                    onChange={(event) => setDeletePassword(event.target.value)}
+                    placeholder="현재 비밀번호를 입력하세요."
+                    className={fieldClass}
+                />
+                {deleteError ? (
+                    <p className="text-xs text-rose-500">{deleteError}</p>
+                ) : null}
+            </div>
+        </ConfirmModal>
         </>
     );
 }
+
+

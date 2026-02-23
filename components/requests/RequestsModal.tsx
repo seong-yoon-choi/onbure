@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { X, Inbox } from "lucide-react";
+import { X, Bell } from "lucide-react";
 import RequestsPanel from "@/components/requests/RequestsPanel";
 
 interface RequestsModalProps {
@@ -265,7 +265,7 @@ export default function RequestsModal({ isOpen, onClose }: RequestsModalProps) {
             }}
             role="dialog"
             aria-modal="false"
-            aria-label="Requests"
+            aria-label="Notices"
         >
             {["top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"].map((edge) => (
                 <div
@@ -295,13 +295,13 @@ export default function RequestsModal({ isOpen, onClose }: RequestsModalProps) {
 
             <div className="h-12 border-b border-[var(--border)] bg-[var(--card-bg)] flex items-center gap-3 px-4 select-none">
                 <div className="flex items-center gap-2 text-[var(--fg)] font-medium">
-                    <Inbox className="w-4 h-4 text-[var(--primary)]" />
-                    Requests
+                    <Bell className="w-4 h-4 text-[var(--primary)]" />
+                    Notices
                 </div>
                 <div
                     className="flex-1 h-full cursor-grab active:cursor-grabbing"
                     onMouseDown={handleDragStart}
-                    aria-label="Drag requests window"
+                    aria-label="Drag notices window"
                 />
                 <button
                     type="button"
@@ -310,7 +310,7 @@ export default function RequestsModal({ isOpen, onClose }: RequestsModalProps) {
                         onClose();
                     }}
                     className="text-[var(--muted)] hover:text-[var(--fg)]"
-                    aria-label="Close requests"
+                    aria-label="Close notices"
                 >
                     <X className="w-5 h-5" />
                 </button>

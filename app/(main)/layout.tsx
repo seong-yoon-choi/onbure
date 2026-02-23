@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { Compass, Inbox, MessageSquare, LogOut, ChevronDown, User as UserIcon, Search, Plus } from "lucide-react";
+import { Compass, Bell, MessageSquare, LogOut, ChevronDown, User as UserIcon, Search, Plus, Users } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,11 +12,11 @@ import ChatWidget from "@/components/chat/ChatWidget";
 import CreateTeamModal from "@/components/teams/CreateTeamModal";
 import RequestsModal from "@/components/requests/RequestsModal";
 import { useAuditRealtime } from "@/lib/realtime/use-audit-realtime";
+import { trackUxClick } from "@/lib/ux/client";
 
-const navItems = [
-    { href: "/discovery", label: "Discovery", icon: Compass },
-    { href: "/requests", label: "Requests", icon: Inbox },
-    { href: "/chat", label: "Chat", icon: MessageSquare },
+const leftNavItems = [
+    { href: "/discovery", label: "Discovery", icon: Compass, actionKey: "nav.discovery" },
+    { href: "/friends", label: "Friends", icon: Users, actionKey: "nav.friends" },
 ];
 
 interface OpenChatDmRequest {
@@ -74,6 +74,30 @@ function readSeenMap(storageKey: string): Record<string, number> {
     }
 }
 
+function readStoredEpoch(storageKey: string): number {
+    if (typeof window === "undefined" || !storageKey) return 0;
+    try {
+        const raw = String(localStorage.getItem(storageKey) || "").trim();
+        if (!raw) return 0;
+        const numeric = Number(raw);
+        if (Number.isFinite(numeric) && numeric > 0) return Math.floor(numeric);
+        const parsed = Date.parse(raw);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    } catch {
+        return 0;
+    }
+}
+
+function writeStoredEpoch(storageKey: string, value: number) {
+    if (typeof window === "undefined" || !storageKey) return;
+    try {
+        const normalized = Number.isFinite(value) && value > 0 ? Math.floor(value) : Date.now();
+        localStorage.setItem(storageKey, String(normalized));
+    } catch {
+        // ignore storage write errors
+    }
+}
+
 export default function MainLayout({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
     const router = useRouter();
@@ -93,7 +117,21 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     const chatAlertFetchSeqRef = useRef(0);
     const requestsAlertInFlightRef = useRef(false);
     const chatAlertInFlightRef = useRef(false);
+    const chatAlertResetAtRef = useRef(0);
     const isWorkspacePage = pathname.startsWith("/workspace");
+    const chatAlertResetStorageKey = currentUserId
+        ? `onbure.chatTopbar.resetAt.${currentUserId}`
+        : "";
+
+    const trackNavAction = useCallback(
+        (actionKey: string, context?: Record<string, unknown>) => {
+            trackUxClick(actionKey, {
+                pathname,
+                ...context,
+            });
+        },
+        [pathname]
+    );
 
     const fetchWithTimeout = useCallback(async (url: string, timeoutMs = 7000) => {
         const controller = new AbortController();
@@ -139,6 +177,21 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         if (sessionStatus !== "authenticated") return;
         void fetchMyTeams();
     }, [sessionStatus]);
+
+    useEffect(() => {
+        chatAlertResetAtRef.current = readStoredEpoch(chatAlertResetStorageKey);
+    }, [chatAlertResetStorageKey]);
+
+    const markChatAlertsChecked = useCallback((at?: number) => {
+        const timestamp = Number.isFinite(Number(at)) && Number(at) > 0
+            ? Math.floor(Number(at))
+            : Date.now();
+        chatAlertResetAtRef.current = timestamp;
+        if (chatAlertResetStorageKey) {
+            writeStoredEpoch(chatAlertResetStorageKey, timestamp);
+        }
+        setHasChatAlert(false);
+    }, [chatAlertResetStorageKey]);
 
     const fetchRequestsAlert = useCallback(async () => {
         if (sessionStatus !== "authenticated") {
@@ -191,7 +244,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         }
 
         try {
-            const threadsRes = await fetchWithTimeout("/api/chat/alerts");
+            const threadsRes = await fetchWithTimeout("/api/chat/alerts", 12000);
             if (!threadsRes.ok) {
                 setChatAlertSafely(false);
                 return;
@@ -200,6 +253,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             const threads = Array.isArray(payload.threads) ? payload.threads : [];
             const dmSeenMapLocal = readSeenMap(`onbure.chatWidget.dmSeenMap.${currentUserId}`);
             const teamSeenMap = readSeenMap(`onbure.chatWidget.teamSeenMap.${currentUserId}`);
+            const alertResetAt = chatAlertResetAtRef.current;
             if (threads.length === 0) {
                 setChatAlertSafely(false);
                 return;
@@ -219,8 +273,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                 const senderId = String(thread.lastSenderId || "").trim();
                 const isFromOther = Boolean(senderId) && senderId !== currentUserId;
                 const latestAt = toEpochMs(thread.lastMessageAt);
+                const isAfterLastCheck = latestAt > alertResetAt;
                 const hasUnread =
                     isFromOther &&
+                    isAfterLastCheck &&
                     (latestAt > seenAt || (thread.type === "DM" && Number(thread.unreadCount || 0) > 0));
 
                 if (hasUnread) {
@@ -248,6 +304,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             setHasRequestsAlert(false);
             setHasChatAlert(false);
             setIsRequestsOpen(false);
+            chatAlertResetAtRef.current = 0;
             return;
         }
 
@@ -286,6 +343,16 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         const isDirectUserEvent =
             actorUserId === currentUserId || targetUserId === currentUserId;
 
+        const isTeamChatEvent =
+            category === "chat" &&
+            teamId.length > 0 &&
+            (eventName.includes("chat") || eventName.includes("message"));
+        if (isTeamChatEvent && myTeams.length === 0) {
+            void fetchMyTeams();
+            void fetchChatAlert();
+            return;
+        }
+
         if (!isDirectUserEvent && !isMyTeamEvent) return;
         if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
@@ -299,6 +366,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             void fetchMyTeams();
             void fetchChatAlert();
             void fetchRequestsAlert();
+        } else if (category === "team" && eventName === "team_member_left") {
+            void fetchMyTeams();
         }
     });
 
@@ -327,15 +396,17 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                 username: customEvent.detail?.username,
                 token: Date.now(),
             });
+            markChatAlertsChecked();
             setIsChatOpen(true);
         };
 
         window.addEventListener("onbure-open-chat-dm", onOpenChatDm as EventListener);
         return () => window.removeEventListener("onbure-open-chat-dm", onOpenChatDm as EventListener);
-    }, []);
+    }, [markChatAlertsChecked]);
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
+        trackNavAction("nav.search", { keywordLength: searchTerm.trim().length });
         router.push(`/discovery?q=${encodeURIComponent(searchTerm)}`);
     };
 
@@ -350,31 +421,33 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                     </Link>
 
                     <nav className="hidden md:flex items-center gap-4">
-                        {navItems
-                            .filter((item) => item.label === "Discovery")
-                            .map((item) => {
-                                const Icon = item.icon;
-                                const isActive = pathname.startsWith(item.href);
-                                return (
-                                    <Link
-                                        key={item.href}
-                                        href={item.href}
-                                        className={cn(
-                                            "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-default",
-                                            isActive
-                                                ? "bg-[var(--card-bg)] text-[var(--fg)] border border-[var(--border)]"
-                                                : "text-[var(--muted)] hover:text-[var(--fg)]"
-                                        )}
-                                    >
-                                        <Icon className="w-4 h-4" />
-                                        {item.label}
-                                    </Link>
-                                );
-                            })}
+                        {leftNavItems.map((item) => {
+                            const Icon = item.icon;
+                            const isActive = pathname.startsWith(item.href);
+                            return (
+                                <Link
+                                    key={item.href}
+                                    href={item.href}
+                                    onClick={() => trackNavAction(item.actionKey)}
+                                    className={cn(
+                                        "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-default",
+                                        isActive
+                                            ? "bg-[var(--card-bg)] text-[var(--fg)] border border-[var(--border)]"
+                                            : "text-[var(--muted)] hover:text-[var(--fg)]"
+                                    )}
+                                >
+                                    <Icon className="w-4 h-4" />
+                                    {item.label}
+                                </Link>
+                            );
+                        })}
 
                         <div className="relative" ref={teamMenuRef}>
                             <button
-                                onClick={() => setTeamOpen(!teamOpen)}
+                                onClick={() => {
+                                    trackNavAction("nav.my_team");
+                                    setTeamOpen(!teamOpen);
+                                }}
                                 className={cn(
                                     "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
                                     pathname.startsWith("/workspace") || pathname.startsWith("/teams")
@@ -409,6 +482,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                                     <button
                                         type="button"
                                         onClick={() => {
+                                            trackUxClick("myteam.dropdown_create_team", { source: "topbar_dropdown" });
                                             setTeamOpen(false);
                                             setIsCreateTeamOpen(true);
                                         }}
@@ -447,18 +521,19 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
                 {/* Right: Actions */}
                 <div className="flex items-center gap-4 justify-end">
-                    {/* Requests Button */}
+                    {/* Notices Button */}
                     <Button
                         variant="ghost"
                         size="sm"
                         className={cn("relative text-[var(--muted)] hover:text-[var(--fg)]", isRequestsOpen && "text-[var(--primary)] bg-[var(--primary)]/10")}
                         onClick={() => {
+                            trackNavAction("nav.notice");
                             setIsRequestsOpen((prev) => !prev);
                             setHasRequestsAlert(false);
                         }}
                     >
-                        <Inbox className="w-4 h-4 mr-2" />
-                        Requests
+                        <Bell className="w-4 h-4 mr-2" />
+                        Notices
                         {hasRequestsAlert && !isRequestsOpen && (
                             <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-rose-500 ring-1 ring-[var(--header-bg)]" />
                         )}
@@ -469,7 +544,11 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                         variant="ghost"
                         size="sm"
                         className={cn("relative text-[var(--muted)] hover:text-[var(--fg)]", isChatOpen && "text-[var(--primary)] bg-[var(--primary)]/10")}
-                        onClick={() => setIsChatOpen(!isChatOpen)}
+                        onClick={() => {
+                            trackNavAction("nav.chat");
+                            markChatAlertsChecked();
+                            setIsChatOpen((prev) => !prev);
+                        }}
                     >
                         <MessageSquare className="w-4 h-4 mr-2" />
                         Chat
@@ -482,14 +561,22 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
                     {/* Profile & Logout */}
                     <div className="flex items-center gap-3">
-                        <Link href="/profile" className="h-8 w-8 rounded-full bg-[var(--primary)]/15 flex items-center justify-center text-[var(--primary)] text-xs font-bold hover:ring-2 hover:ring-[var(--ring)]/40 transition-all">
+                        <Link
+                            href="/profile"
+                            onClick={() => trackNavAction("nav.my_profile")}
+                            className="h-8 w-8 rounded-full bg-[var(--primary)]/15 flex items-center justify-center text-[var(--primary)] text-xs font-bold hover:ring-2 hover:ring-[var(--ring)]/40 transition-all"
+                        >
                             {session?.user?.name?.[0] || <UserIcon className="w-4 h-4" />}
                         </Link>
                         <Button
                             variant="ghost"
                             size="icon"
                             className="text-[var(--muted)] hover:text-red-500 w-8 h-8"
-                            onClick={() => signOut({ callbackUrl: "/login" })}
+                            aria-label="Log out"
+                            onClick={() => {
+                                trackNavAction("nav.logout");
+                                void signOut({ callbackUrl: "/login" });
+                            }}
                         >
                             <LogOut className="w-4 h-4" />
                         </Button>
@@ -520,7 +607,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             />
             <ChatWidget
                 isOpen={isChatOpen}
-                onClose={() => setIsChatOpen(false)}
+                onClose={() => {
+                    markChatAlertsChecked();
+                    setIsChatOpen(false);
+                }}
                 openDmRequest={openChatDmRequest}
             />
             <CreateTeamModal

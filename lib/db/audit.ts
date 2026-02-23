@@ -1,4 +1,3 @@
-import { isSupabaseBackend } from "@/lib/db/backend";
 import { supabaseRest } from "@/lib/supabase-rest";
 
 export type AuditCategory = "chat" | "request" | "workspace" | "team" | "system";
@@ -64,7 +63,7 @@ function resolveScope(input: AuditLogInput): AuditScope {
 }
 
 export async function appendAuditLog(input: AuditLogInput) {
-    if (!isSupabaseBackend()) return;
+    
 
     const category = normalizeText(input.category);
     const event = normalizeText(input.event);

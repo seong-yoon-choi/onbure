@@ -2,10 +2,34 @@ import { NextResponse } from "next/server";
 import type { RequestItem, RequestStatus } from "@/lib/db/requests";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { supabaseRest } from "@/lib/supabase-rest";
 
 interface RequestsPayload {
     requests: unknown[];
     history: unknown[];
+}
+
+type AlertRequestType = "ALERT";
+
+interface TeamLeaveAlertItem {
+    id: string;
+    requestId: string;
+    type: AlertRequestType;
+    fromId: string;
+    toId: string;
+    teamId?: string;
+    status: RequestStatus;
+    message?: string;
+    createdAt: string;
+}
+
+interface TeamLeaveAuditRow {
+    id: string;
+    actor_user_id: string | null;
+    target_user_id: string | null;
+    team_id: string | null;
+    metadata: Record<string, unknown> | null;
+    created_at: string;
 }
 
 interface RequestsCacheEntry {
@@ -13,10 +37,16 @@ interface RequestsCacheEntry {
     payload: RequestsPayload;
 }
 
+interface FriendsCacheEntry {
+    expiresAt: number;
+    payload: unknown[];
+}
+
 const REQUESTS_CACHE_TTL_MS = 8000;
 
 declare global {
     var __onbureRequestsCache: Map<string, RequestsCacheEntry> | undefined;
+    var __onbureFriendsCache: Map<string, FriendsCacheEntry> | undefined;
 }
 
 const requestsCache =
@@ -81,6 +111,26 @@ function invalidateRequestsCache(userIds: Array<string | undefined | null>) {
     }
 }
 
+function invalidateFriendsCache(userIds: Array<string | undefined | null>) {
+    const cache = globalThis.__onbureFriendsCache;
+    if (!cache) return;
+    for (const userId of userIds) {
+        const normalized = String(userId || "").trim();
+        if (!normalized) continue;
+        cache.delete(normalized);
+    }
+}
+
+function invalidateChatDmUsersCache(userIds: Array<string | undefined | null>) {
+    const cache = (globalThis as { __onbureChatDmUsersCache?: Map<string, unknown> }).__onbureChatDmUsersCache;
+    if (!cache) return;
+    for (const userId of userIds) {
+        const normalized = String(userId || "").trim();
+        if (!normalized) continue;
+        cache.delete(normalized);
+    }
+}
+
 function sortLatestFirst<T extends { createdAt?: string }>(items: T[]) {
     return [...items].sort((a, b) => {
         const aTime = new Date(a.createdAt || 0).getTime();
@@ -105,11 +155,50 @@ function fileKey(item: { teamId?: string; fromId: string; toId: string; fileId?:
     return `${item.teamId || ""}:${item.fileId || ""}:${item.fromId}:${item.toId}`;
 }
 
+function friendKey(item: { fromId: string; toId: string }) {
+    return [item.fromId, item.toId].sort().join(":");
+}
+
 function matchesRequest(item: RequestItem, requestId: string) {
     return item.id === requestId || item.requestId === requestId;
 }
 
-function parseRequestConflictError(error: unknown): { requestType: "CHAT" | "INVITE" | "JOIN" | "FILE"; message: string } | null {
+function readAlertMetadataValue(metadata: Record<string, unknown> | null | undefined, key: string) {
+    if (!metadata || typeof metadata !== "object") return "";
+    return String(metadata[key] || "").trim();
+}
+
+function mapTeamLeaveAuditToAlert(row: TeamLeaveAuditRow): TeamLeaveAlertItem {
+    const leftUsername = readAlertMetadataValue(row.metadata, "leftUsername") || String(row.actor_user_id || "").trim();
+    const teamName = readAlertMetadataValue(row.metadata, "teamName") || String(row.team_id || "").trim() || "the team";
+    const message = leftUsername
+        ? `${leftUsername} left ${teamName}.`
+        : `A member left ${teamName}.`;
+
+    return {
+        id: `ALERT:${row.id}`,
+        requestId: row.id,
+        type: "ALERT",
+        fromId: String(row.actor_user_id || "").trim(),
+        toId: String(row.target_user_id || "").trim(),
+        teamId: String(row.team_id || "").trim() || undefined,
+        status: "ACCEPTED",
+        message,
+        createdAt: String(row.created_at || new Date().toISOString()),
+    };
+}
+
+async function getTeamLeaveAlertsForOwner(userId: string): Promise<TeamLeaveAlertItem[]> {
+    const rows = (await supabaseRest(
+        `/audit_logs?select=id,actor_user_id,target_user_id,team_id,metadata,created_at&category=eq.team&event=eq.team_member_left&target_user_id=eq.${encodeURIComponent(
+            userId
+        )}&order=created_at.desc&limit=50`
+    )) as TeamLeaveAuditRow[];
+
+    return rows.map(mapTeamLeaveAuditToAlert);
+}
+
+function parseRequestConflictError(error: unknown): { requestType: "CHAT" | "FRIEND" | "INVITE" | "JOIN" | "FILE"; message: string } | null {
     if (!error || typeof error !== "object") return null;
 
     const candidate = error as {
@@ -120,23 +209,27 @@ function parseRequestConflictError(error: unknown): { requestType: "CHAT" | "INV
     if (candidate.name !== "RequestConflictError") return null;
 
     const requestType = String(candidate.requestType || "").toUpperCase();
-    if (!["CHAT", "INVITE", "JOIN", "FILE"].includes(requestType)) return null;
+    if (!["CHAT", "FRIEND", "INVITE", "JOIN", "FILE"].includes(requestType)) return null;
 
     return {
-        requestType: requestType as "CHAT" | "INVITE" | "JOIN" | "FILE",
+        requestType: requestType as "CHAT" | "FRIEND" | "INVITE" | "JOIN" | "FILE",
         message: typeof candidate.message === "string" ? candidate.message : "",
     };
 }
 
 async function findAuthorizedRequestForUpdate(
     requestsDb: RequestsDbModule,
-    type: "CHAT" | "INVITE" | "JOIN" | "FILE",
+    type: "CHAT" | "FRIEND" | "INVITE" | "JOIN" | "FILE",
     currentUserId: string,
     requestId: string
 ) {
     const allStatuses: RequestStatus[] = ["PENDING", "ACCEPTED", "DECLINED"];
     if (type === "CHAT") {
         const requests = await requestsDb.getChatRequestsForUserByStatuses(currentUserId, allStatuses);
+        return requests.find((item) => matchesRequest(item, requestId)) || null;
+    }
+    if (type === "FRIEND") {
+        const requests = await requestsDb.getFriendRequestsForUserByStatuses(currentUserId, allStatuses);
         return requests.find((item) => matchesRequest(item, requestId)) || null;
     }
     if (type === "INVITE") {
@@ -164,17 +257,21 @@ export async function GET() {
     try {
         const requestsDb = await loadRequestsDb();
         const allStatuses: RequestStatus[] = ["PENDING", "ACCEPTED", "DECLINED"];
-        const [chatAll, invitesAll, applicationsAll, fileAll] = await Promise.all([
+        const [chatAll, friendAll, invitesAll, applicationsAll, fileAll] = await Promise.all([
             requestsDb.getChatRequestsForUserByStatuses(userId, allStatuses),
+            requestsDb.getFriendRequestsForUserByStatuses(userId, allStatuses),
             requestsDb.getTeamInvitesForUserByStatuses(userId, allStatuses),
             requestsDb.getJoinApplicationsForManagerByStatuses(userId, allStatuses),
             requestsDb.getFileShareRequestsForUserByStatuses(userId, allStatuses),
         ]);
+        const ownerTeamLeaveAlerts = await getTeamLeaveAlertsForOwner(userId);
 
         const pendingChat = chatAll.filter((item) => item.status === "PENDING");
+        const pendingFriends = friendAll.filter((item) => item.status === "PENDING");
         const pendingInvites = invitesAll.filter((item) => item.status === "PENDING");
         const pendingApplications = applicationsAll.filter((item) => item.status === "PENDING");
         const historyChat = chatAll.filter((item) => item.status !== "PENDING");
+        const historyFriends = friendAll.filter((item) => item.status !== "PENDING");
         const historyInvites = invitesAll.filter((item) => item.status !== "PENDING");
         const historyApplications = applicationsAll.filter((item) => item.status !== "PENDING");
         const pendingFiles = fileAll.filter((item) => item.status === "PENDING");
@@ -182,6 +279,9 @@ export async function GET() {
 
         const acceptedChatKeys = new Set(
             historyChat.filter((item) => item.status === "ACCEPTED").map(chatKey)
+        );
+        const acceptedFriendKeys = new Set(
+            historyFriends.filter((item) => item.status === "ACCEPTED").map(friendKey)
         );
         const acceptedInviteKeys = new Set(
             historyInvites.filter((item) => item.status === "ACCEPTED").map(inviteKey)
@@ -194,21 +294,25 @@ export async function GET() {
         );
 
         const filteredPendingChat = pendingChat.filter((item) => !acceptedChatKeys.has(chatKey(item)));
+        const filteredPendingFriends = pendingFriends.filter((item) => !acceptedFriendKeys.has(friendKey(item)));
         const filteredPendingInvites = pendingInvites.filter((item) => !acceptedInviteKeys.has(inviteKey(item)));
         const filteredPendingApplications = pendingApplications.filter((item) => !acceptedJoinKeys.has(joinKey(item)));
         const filteredPendingFiles = pendingFiles.filter((item) => !acceptedFileKeys.has(fileKey(item)));
 
         const requests = sortLatestFirst([
             ...filteredPendingChat,
+            ...filteredPendingFriends,
             ...filteredPendingInvites,
             ...filteredPendingApplications,
             ...filteredPendingFiles,
         ]);
         const history = sortLatestFirst([
             ...historyChat,
+            ...historyFriends,
             ...historyInvites,
             ...historyApplications,
             ...historyFiles,
+            ...ownerTeamLeaveAlerts,
         ]);
 
         const payload: RequestsPayload = { requests, history };
@@ -254,6 +358,12 @@ export async function POST(req: Request) {
                 return NextResponse.json({ error: "toId is required for chat request." }, { status: 400 });
             }
             await requestsDb.createChatRequest(userId, toId, normalizedMessage || "Let's chat!");
+            targetUserId = toId;
+        } else if (type === "FRIEND") {
+            if (typeof toId !== "string" || !toId.trim()) {
+                return NextResponse.json({ error: "toId is required for friend request." }, { status: 400 });
+            }
+            await requestsDb.createFriendRequest(userId, toId, normalizedMessage || "Let's be friends.");
             targetUserId = toId;
         } else if (type === "INVITE") {
             if (!body.teamId) throw new Error("Team ID required for invite");
@@ -321,6 +431,10 @@ export async function POST(req: Request) {
         }
 
         invalidateRequestsCache([userId, targetUserId, toId, joinOwnerUserId]);
+        if (String(type || "").toUpperCase() === "FRIEND") {
+            invalidateFriendsCache([userId, targetUserId, toId]);
+            invalidateChatDmUsersCache([userId, targetUserId, toId]);
+        }
         const normalizedType = String(type || "").toUpperCase();
         const normalizedTeamId = String((body as { teamId?: string })?.teamId || "").trim();
         const requestTargetUserId =
@@ -397,14 +511,14 @@ export async function PUT(req: Request) {
         }
 
         const { type, id, status } = body as {
-            type?: "CHAT" | "INVITE" | "JOIN" | "FILE";
+            type?: "CHAT" | "FRIEND" | "INVITE" | "JOIN" | "FILE";
             id?: string;
             status?: RequestStatus;
         };
         if (!type || !id || !status) {
             return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
         }
-        if (!["CHAT", "INVITE", "JOIN", "FILE"].includes(type)) {
+        if (!["CHAT", "FRIEND", "INVITE", "JOIN", "FILE"].includes(type)) {
             return NextResponse.json({ error: "Invalid request type." }, { status: 400 });
         }
         if (!["PENDING", "ACCEPTED", "DECLINED"].includes(status)) {
@@ -457,6 +571,10 @@ export async function PUT(req: Request) {
         }
 
         invalidateRequestsCache([updated.fromId, updated.toId, updated.userId, currentUserId]);
+        if (type === "FRIEND") {
+            invalidateFriendsCache([updated.fromId, updated.toId, updated.userId, currentUserId]);
+            invalidateChatDmUsersCache([updated.fromId, updated.toId, updated.userId, currentUserId]);
+        }
         await auditDb.appendAuditLog({
             category: "request",
             event: "request_status_updated",
@@ -473,7 +591,7 @@ export async function PUT(req: Request) {
             },
         });
 
-        if (type === "CHAT" && status === "ACCEPTED") {
+        if ((type === "CHAT" || type === "FRIEND") && status === "ACCEPTED") {
             await auditDb.appendAuditLog({
                 category: "chat",
                 event: "connection_accepted",
