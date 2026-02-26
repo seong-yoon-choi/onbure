@@ -2,8 +2,7 @@ import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GithubProvider from "next-auth/providers/github";
 import GoogleProvider from "next-auth/providers/google";
-import { getUserByEmail } from "./db/users";
-import bcrypt from "bcryptjs";
+import { getUserByEmail, verifyUserPassword } from "./db/users";
 
 export const authOptions: NextAuthOptions = {
     providers: [
@@ -17,13 +16,14 @@ export const authOptions: NextAuthOptions = {
                 if (!credentials?.email || !credentials?.password) return null;
 
                 try {
-                    const user = await getUserByEmail(credentials.email);
-                    if (!user || !user.passwordHash) {
-                        console.error("[NextAuth] User not found or missing password hash"); // Secure log
+                    const email = String(credentials.email || "").trim().toLowerCase();
+                    const user = await getUserByEmail(email);
+                    if (!user) {
+                        console.error("[NextAuth] User not found");
                         return null;
                     }
 
-                    const isValid = await bcrypt.compare(credentials.password, user.passwordHash);
+                    const isValid = await verifyUserPassword(user.userId, credentials.password);
                     if (!isValid) {
                         console.error("[NextAuth] Invalid password");
                         return null;
@@ -81,5 +81,6 @@ export const authOptions: NextAuthOptions = {
         signIn: "/login",
         error: "/login", // Redirect to login on error
     },
-    debug: process.env.NODE_ENV !== "production",
+    secret: process.env.NEXTAUTH_SECRET,
+    debug: process.env.NEXTAUTH_DEBUG === "true",
 };

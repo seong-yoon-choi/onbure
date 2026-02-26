@@ -236,7 +236,7 @@ export async function listDmUsersForChat(currentUserId: string): Promise<ChatUse
     const acceptedPartnerIds = new Set(await getAcceptedConnectionPartnerIds(currentUserId));
     const users = await listUsers();
     return users
-        .filter((user) => user.userId && acceptedPartnerIds.has(user.userId))
+        .filter((user) => user && user.userId && acceptedPartnerIds.has(user.userId))
         .map((user) => ({
             id: user.userId,
             userId: user.userId,

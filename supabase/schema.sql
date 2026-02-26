@@ -48,6 +48,22 @@ create trigger trg_profiles_updated_at
 before update on public.profiles
 for each row execute function public.set_updated_at();
 
+-- SIGNUP EMAIL VERIFICATION CODES
+create table if not exists public.verification_codes (
+  email text primary key,
+  code text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists trg_verification_codes_updated_at on public.verification_codes;
+create trigger trg_verification_codes_updated_at
+before update on public.verification_codes
+for each row execute function public.set_updated_at();
+
+create index if not exists idx_verification_codes_expires_at on public.verification_codes (expires_at);
+
 alter table if exists public.profiles
   add column if not exists public_code text;
 alter table if exists public.profiles
@@ -108,19 +124,51 @@ begin
   end if;
 end $$;
 
--- SIGNUP EMAIL CODES
-create table if not exists public.signup_email_codes (
-  id uuid primary key default gen_random_uuid(),
-  email text not null,
-  code_hash text not null,
-  expires_at timestamptz not null,
-  verified_at timestamptz,
-  consumed_at timestamptz,
-  created_at timestamptz not null default now()
-);
+-- AUTH -> PROFILE SYNC (keep profile row in sync with signup metadata)
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.profiles (user_id, email, username, gender, age, country, created_at, updated_at)
+  values (
+    new.id,
+    new.email,
+    coalesce(new.raw_user_meta_data->>'username', split_part(new.email, '@', 1)),
+    case
+      when lower(coalesce(new.raw_user_meta_data->>'gender', '')) in ('male', 'female', 'other')
+        then lower(new.raw_user_meta_data->>'gender')
+      else null
+    end,
+    case
+      when coalesce(new.raw_user_meta_data->>'age', '') ~ '^[0-9]{1,3}$'
+        and (new.raw_user_meta_data->>'age')::integer between 1 and 120
+        then (new.raw_user_meta_data->>'age')::integer
+      else null
+    end,
+    nullif(upper(coalesce(new.raw_user_meta_data->>'country', '')), ''),
+    now(),
+    now()
+  )
+  on conflict (user_id) do update
+    set email = excluded.email,
+        username = excluded.username,
+        gender = excluded.gender,
+        age = excluded.age,
+        country = excluded.country,
+        updated_at = now();
 
-create index if not exists idx_signup_email_codes_email_created on public.signup_email_codes (email, created_at desc);
-create index if not exists idx_signup_email_codes_expires on public.signup_email_codes (expires_at);
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+
+
 
 -- TEAMS
 create table if not exists public.teams (
@@ -419,12 +467,8 @@ create table if not exists public.ux_click_events (
   clicked_at timestamptz not null default now()
 );
 
-create index if not exists idx_ux_click_events_action on public.ux_click_events (action_key);
-create index if not exists idx_ux_click_events_clicked_at on public.ux_click_events (clicked_at desc);
-create index if not exists idx_ux_click_events_user on public.ux_click_events (user_id);
-
 create or replace view public.ux_nav_counts
-with (security_invoker = true)
+with (security_invoker = on)
 as
 select
   a.action_key,
@@ -438,7 +482,7 @@ where a.area = 'nav' and a.is_active = true
 group by a.action_key, a.action_name, a.sort_order;
 
 create or replace view public.ux_discovery_counts
-with (security_invoker = true)
+with (security_invoker = on)
 as
 select
   a.action_key,
@@ -452,7 +496,7 @@ where a.area = 'discovery' and a.is_active = true
 group by a.action_key, a.action_name, a.sort_order;
 
 create or replace view public.ux_friends_counts
-with (security_invoker = true)
+with (security_invoker = on)
 as
 select
   a.action_key,
@@ -466,7 +510,7 @@ where a.area = 'friends' and a.is_active = true
 group by a.action_key, a.action_name, a.sort_order;
 
 create or replace view public.ux_my_team_counts
-with (security_invoker = true)
+with (security_invoker = on)
 as
 select
   a.action_key,
@@ -480,7 +524,7 @@ where a.area = 'my_team' and a.is_active = true
 group by a.action_key, a.action_name, a.sort_order;
 
 create or replace view public.ux_profile_counts
-with (security_invoker = true)
+with (security_invoker = on)
 as
 select
   a.action_key,
@@ -515,9 +559,9 @@ alter table if exists public.workspace_meeting_notes enable row level security;
 alter table if exists public.workspace_agreement_notes enable row level security;
 alter table if exists public.workspace_comments enable row level security;
 alter table if exists public.audit_logs enable row level security;
-alter table if exists public.signup_email_codes enable row level security;
 alter table if exists public.ux_actions enable row level security;
 alter table if exists public.ux_click_events enable row level security;
+alter table if exists public.verification_codes enable row level security;
 
 alter table if exists public.profiles force row level security;
 alter table if exists public.teams force row level security;
@@ -537,9 +581,9 @@ alter table if exists public.workspace_meeting_notes force row level security;
 alter table if exists public.workspace_agreement_notes force row level security;
 alter table if exists public.workspace_comments force row level security;
 alter table if exists public.audit_logs force row level security;
-alter table if exists public.signup_email_codes force row level security;
 alter table if exists public.ux_actions force row level security;
 alter table if exists public.ux_click_events force row level security;
+alter table if exists public.verification_codes force row level security;
 
 -- Explicit privilege hardening for direct anon/auth API access.
 revoke all on table public.profiles from anon, authenticated;
@@ -560,9 +604,9 @@ revoke all on table public.workspace_meeting_notes from anon, authenticated;
 revoke all on table public.workspace_agreement_notes from anon, authenticated;
 revoke all on table public.workspace_comments from anon, authenticated;
 revoke all on table public.audit_logs from anon, authenticated;
-revoke all on table public.signup_email_codes from anon, authenticated;
 revoke all on table public.ux_actions from anon, authenticated;
 revoke all on table public.ux_click_events from anon, authenticated;
+revoke all on table public.verification_codes from anon, authenticated;
 
 -- Realtime-safe table only: audit_logs (minimal metadata, no source payload rows).
 grant select on table public.audit_logs to anon, authenticated;

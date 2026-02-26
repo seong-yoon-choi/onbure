@@ -1,0 +1,221 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { LinkIcon, FileText, CheckSquare, Settings, File, Plus } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+export default function WorkspacePage() {
+    const { teamId } = useParams();
+    const [data, setData] = useState<any>(null);
+    const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState("links");
+    const [newItem, setNewItem] = useState({ title: "", url: "", content: "" });
+    const [error, setError] = useState("");
+
+    async function fetchData() {
+        const res = await fetch(`/api/workspace/${teamId}`);
+        if (res.status === 403) {
+            setError("Access Denied. You are not a member of this team.");
+            setLoading(false);
+            return;
+        }
+        if (res.ok) {
+            setData(await res.json());
+        }
+        setLoading(false);
+    }
+
+    useEffect(() => {
+        fetchData();
+    }, [teamId]);
+
+    const handleCreate = async (type: string) => {
+        if (!newItem.title && type !== "AGREEMENT") return;
+
+        await fetch(`/api/workspace/${teamId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...newItem, type }),
+        });
+        setNewItem({ title: "", url: "", content: "" });
+        fetchData();
+    };
+
+    if (loading) return <div className="p-8 text-center text-[var(--muted)]">Loading Workspace...</div>;
+    if (error) return <div className="p-8 text-center text-red-500">{error}</div>;
+
+    const { team, links, files, tasks, meetingNotes, agreementNotes } = data;
+
+    const tabs = [
+        { id: "links", label: "Links", icon: LinkIcon },
+        { id: "files", label: "Files", icon: File },
+        { id: "tasks", label: "Tasks", icon: CheckSquare },
+        { id: "meeting", label: "Meeting Notes", icon: FileText },
+        { id: "agreement", label: "Agreement", icon: Settings },
+    ];
+
+    return (
+        <div className="space-y-6 h-full flex flex-col">
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-3xl font-bold text-white">{team.name}</h1>
+                    <p className="text-slate-400">{team.description}</p>
+                </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="border-b border-slate-800 flex gap-6">
+                {tabs.map(tab => (
+                    <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={cn(
+                            "flex items-center gap-2 pb-3 text-sm font-medium transition-all border-b-2",
+                            activeTab === tab.id
+                                ? "border-violet-500 text-violet-400"
+                                : "border-transparent text-slate-400 hover:text-white"
+                        )}
+                    >
+                        <tab.icon className="w-4 h-4" />
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+
+            {/* Content Area */}
+            <div className="flex-1 overflow-auto">
+                {activeTab === "links" && (
+                    <div className="space-y-4">
+                        <div className="flex gap-2">
+                            <Input
+                                placeholder="Link Title"
+                                value={newItem.title}
+                                onChange={e => setNewItem({ ...newItem, title: e.target.value })}
+                            />
+                            <Input
+                                placeholder="URL"
+                                value={newItem.url}
+                                onChange={e => setNewItem({ ...newItem, url: e.target.value })}
+                            />
+                            <Button onClick={() => handleCreate("LINK")}><Plus className="w-4 h-4" /></Button>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {links.map((link: any) => (
+                                <Card key={link.id} className="p-4 flex flex-col justify-between hover:shadow-md">
+                                    <h3 className="font-medium text-[var(--fg)]">{link.title}</h3>
+                                    <a href={link.url} target="_blank" className="text-xs text-[var(--primary)] hover:underline mt-2 truncate block">{link.url}</a>
+                                </Card>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === "files" && (
+                    <div className="space-y-4">
+                        <div className="flex gap-2 items-center p-4 bg-slate-900/50 rounded-lg border border-dashed border-slate-800">
+                            <span className="text-sm text-slate-500">Allowed: PDF, Image, Doc (Mock Upload)</span>
+                            <div className="flex-1" />
+                            <Input
+                                placeholder="File Title"
+                                className="w-48"
+                                value={newItem.title}
+                                onChange={e => setNewItem({ ...newItem, title: e.target.value })}
+                            />
+                            <Button onClick={() => handleCreate("FILE")}>Upload Mock</Button>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            {files.map((file: any) => (
+                                <Card key={file.id} className="p-4 flex flex-col items-center text-center">
+                                    <File className="w-8 h-8 text-slate-600 mb-2" />
+                                    <h3 className="font-medium text-white text-sm truncate w-full">{file.title}</h3>
+                                    <span className="text-xs text-slate-500">{new Date(file.createdAt).toLocaleDateString()}</span>
+                                </Card>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === "tasks" && (
+                    <div className="space-y-4">
+                        <div className="flex gap-2">
+                            <Input
+                                placeholder="New Task"
+                                value={newItem.title}
+                                onChange={e => setNewItem({ ...newItem, title: e.target.value })}
+                            />
+                            <Button onClick={() => handleCreate("TASK")}>Add Task</Button>
+                        </div>
+                        <div className="space-y-2">
+                            {tasks.map((task: any) => (
+                                <Card key={task.id} className="p-4 flex items-center justify-between">
+                                    <span className={cn("font-medium", task.status === "Done" && "line-through text-slate-500")}>
+                                        {task.title}
+                                    </span>
+                                    <select
+                                        value={task.status}
+                                        className="bg-slate-900 border border-slate-700 rounded text-xs px-2 py-1"
+                                        onChange={async (e) => {
+                                            await fetch(`/api/workspace/${teamId}`, {
+                                                method: "PATCH",
+                                                headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify({ type: "TASK_STATUS", id: task.id, status: e.target.value })
+                                            });
+                                            fetchData();
+                                        }}
+                                    >
+                                        <option>To Do</option>
+                                        <option>In Progress</option>
+                                        <option>Done</option>
+                                    </select>
+                                </Card>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === "agreement" && (
+                    <div className="h-full flex flex-col">
+                        <Card className="flex-1 p-6 relative flex flex-col">
+                            <h3 className="text-lg font-bold text-white mb-4">Team Agreement</h3>
+                            {agreementNotes.length > 0 ? (
+                                <div className="prose prose-invert max-w-none flex-1">
+                                    {agreementNotes[0].content}
+                                </div>
+                            ) : (
+                                <div className="text-slate-500 italic">No agreement yet. Create one.</div>
+                            )}
+
+                            {/* Editor or Create Button placeholder */}
+                            {agreementNotes.length === 0 && (
+                                <div className="mt-4">
+                                    <textarea
+                                        className="w-full bg-slate-900 rounded p-4 text-white"
+                                        placeholder="Draft agreement..."
+                                        rows={10}
+                                        value={newItem.content}
+                                        onChange={e => setNewItem({ ...newItem, content: e.target.value })}
+                                    />
+                                    <Button className="mt-2" onClick={() => handleCreate("AGREEMENT")}>Save Agreement</Button>
+                                </div>
+                            )}
+
+                        </Card>
+                        {/* MANDATORY FOOTER */}
+                        <div className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-center text-yellow-400 font-medium text-sm">
+                            ※ 지분 기능에 대해 지속적인 회의가 필요
+                        </div>
+                    </div>
+                )}
+                {activeTab === "meeting" && (
+                    <div>
+                        <p className="text-slate-500">Meeting Notes functionality...</p>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}

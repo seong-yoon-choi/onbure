@@ -5,9 +5,9 @@ function trimSlash(value: string) {
 }
 
 function assertSupabaseEnv() {
-    const url = String(process.env.SUPABASE_URL || "").trim();
+    const url = String(process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "").trim();
     const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-    if (!url) throw new Error("Missing SUPABASE_URL");
+    if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL");
     if (!serviceRoleKey) throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
 
     return {
@@ -17,7 +17,7 @@ function assertSupabaseEnv() {
 }
 
 export function isSupabaseConfigured() {
-    return Boolean(process.env.SUPABASE_URL) && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
+    return (Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL) || Boolean(process.env.SUPABASE_URL)) && Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
 export function assertSupabaseBackendEnabled() {

@@ -1,0 +1,235 @@
+"use client";
+
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
+const STORAGE_KEY = "onbure.chatWidget.rect";
+
+function clamp(v: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, v));
+}
+
+interface Rect { x: number; y: number; width: number; height: number }
+
+export default function ChatWidget({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const [mounted, setMounted] = useState(false);
+  const [rect, setRect] = useState<Rect | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0, rectX: 0, rectY: 0 });
+  const [isResizing, setIsResizing] = useState<string | null>(null);
+  const widgetRef = useRef<HTMLDivElement>(null);
+
+  const defaults = { width: 420, height: 600 };
+  const min = { width: 320, height: 420 };
+  const max = { width: 720, height: 900 };
+  const RESIZE_HANDLE_SIZE = 10;
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Rect;
+        setRect(parsed);
+        return;
+      }
+    } catch (e) {
+      console.error("Failed to read chat widget rect", e);
+    }
+
+    const w = defaults.width;
+    const h = defaults.height;
+    const x = typeof window !== "undefined" ? window.innerWidth - w - 24 : 0;
+    const y = typeof window !== "undefined" ? window.innerHeight - h - 24 : 0;
+    setRect({ x, y, width: w, height: h });
+  }, [mounted]);
+
+  const saveRect = useCallback((r: Rect) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(r));
+    } catch (e) {
+      console.error("Failed to persist chat rect", e);
+    }
+  }, []);
+
+  const clampRect = (r: Rect) => {
+    const winW = typeof window !== "undefined" ? window.innerWidth : 1024;
+    const winH = typeof window !== "undefined" ? window.innerHeight : 768;
+    const w = clamp(r.width, min.width, max.width);
+    const h = clamp(r.height, min.height, max.height);
+    const minX = 24 - w;
+    const maxX = winW - 24;
+    const minY = 24 - h;
+    const maxY = winH - 24;
+    const x = clamp(r.x, minX, maxX);
+    const y = clamp(r.y, minY, maxY);
+    return { x, y, width: w, height: h };
+  };
+
+  // ESC to close
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    if (isOpen) window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
+
+  const handleDragStart = (e: React.MouseEvent) => {
+    if (!rect) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button")) return;
+    setIsDragging(true);
+    setDragStart({ x: e.clientX, y: e.clientY, rectX: rect.x, rectY: rect.y });
+  };
+
+  const handleResizeStart = (e: React.MouseEvent, edge: string) => {
+    e.preventDefault();
+    setIsResizing(edge);
+    setDragStart({ x: e.clientX, y: e.clientY, rectX: rect?.x || 0, rectY: rect?.y || 0 });
+  };
+
+  useEffect(() => {
+    if (!isDragging && !isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!rect) return;
+
+      const deltaX = e.clientX - dragStart.x;
+      const deltaY = e.clientY - dragStart.y;
+
+      if (isDragging) {
+        const next = { ...rect, x: dragStart.rectX + deltaX, y: dragStart.rectY + deltaY };
+        const cl = clampRect(next);
+        setRect(cl);
+        return;
+      }
+
+      if (isResizing) {
+        let newRect = { ...rect };
+        // left: 여 width 감소, x 증가, right 끝점 유지
+        // right: width만 증가
+        // top: y 증가 (위로), height 감소
+        // bottom: height만 증가
+        if (isResizing.includes("left")) {
+          newRect.x = dragStart.rectX + deltaX;
+          newRect.width = rect.width - deltaX;
+        }
+        if (isResizing.includes("right") && !isResizing.includes("left")) {
+          newRect.width = rect.width + deltaX;
+        }
+        if (isResizing.includes("top")) {
+          newRect.y = dragStart.rectY + deltaY;
+          newRect.height = rect.height - deltaY;
+        }
+        if (isResizing.includes("bottom") && !isResizing.includes("top")) {
+          newRect.height = rect.height + deltaY;
+        }
+        const cl = clampRect(newRect);
+        setRect(cl);
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (isDragging || isResizing) {
+        saveRect(rect);
+      }
+      setIsDragging(false);
+      setIsResizing(null);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDragging, isResizing, dragStart, rect, saveRect]);
+
+  if (!mounted || !rect) return null;
+  if (!isOpen) return null;
+
+  return (
+    <div
+      ref={widgetRef}
+      className="fixed z-50 flex flex-col border rounded-lg overflow-hidden shadow-lg"
+      style={{
+        left: `${rect.x}px`,
+        top: `${rect.y}px`,
+        width: `${rect.width}px`,
+        height: `${rect.height}px`,
+        borderColor: "var(--border)",
+        backgroundColor: "var(--card-bg)",
+        cursor: isDragging ? "grabbing" : "default",
+      }}
+    >
+      {/* Resize handles */}
+      {["top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right"].map((edge) => (
+        <div
+          key={edge}
+          onMouseDown={(e) => handleResizeStart(e, edge)}
+          className="absolute"
+          style={{
+            cursor:
+              edge === "top" || edge === "bottom" ? "ns-resize" :
+              edge === "left" || edge === "right" ? "ew-resize" :
+              edge === "top-left" || edge === "bottom-right" ? "nwse-resize" :
+              "nesw-resize",
+            ...(edge === "top" && { top: 0, left: RESIZE_HANDLE_SIZE, right: RESIZE_HANDLE_SIZE, height: RESIZE_HANDLE_SIZE }),
+            ...(edge === "bottom" && { bottom: 0, left: RESIZE_HANDLE_SIZE, right: RESIZE_HANDLE_SIZE, height: RESIZE_HANDLE_SIZE }),
+            ...(edge === "left" && { left: 0, top: RESIZE_HANDLE_SIZE, bottom: RESIZE_HANDLE_SIZE, width: RESIZE_HANDLE_SIZE }),
+            ...(edge === "right" && { right: 0, top: RESIZE_HANDLE_SIZE, bottom: RESIZE_HANDLE_SIZE, width: RESIZE_HANDLE_SIZE }),
+            ...(edge === "top-left" && { top: 0, left: 0, width: RESIZE_HANDLE_SIZE * 2, height: RESIZE_HANDLE_SIZE * 2 }),
+            ...(edge === "top-right" && { top: 0, right: 0, width: RESIZE_HANDLE_SIZE * 2, height: RESIZE_HANDLE_SIZE * 2 }),
+            ...(edge === "bottom-left" && { bottom: 0, left: 0, width: RESIZE_HANDLE_SIZE * 2, height: RESIZE_HANDLE_SIZE * 2 }),
+            ...(edge === "bottom-right" && { bottom: 0, right: 0, width: RESIZE_HANDLE_SIZE * 2, height: RESIZE_HANDLE_SIZE * 2 }),
+          }}
+        />
+      ))}
+
+      {/* Header */}
+      <div
+        onMouseDown={handleDragStart}
+        className="flex items-center justify-between px-4 flex-shrink-0 select-none"
+        style={{ height: 46, background: "var(--primary)", color: "var(--primary-foreground)", cursor: isDragging ? "grabbing" : "grab" }}
+      >
+        <div className="text-sm font-medium">Chat</div>
+        <button
+          onClick={() => {
+            saveRect(rect);
+            onClose();
+          }}
+          className="text-[var(--primary-foreground)] hover:opacity-80"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 p-4 overflow-auto text-[var(--fg)]">
+        <div className="text-sm text-[var(--muted)]">Select a conversation to start chatting (mock)</div>
+      </div>
+
+      {/* Footer */}
+      <div className="p-4 border-t flex-shrink-0" style={{ borderColor: "var(--border)", backgroundColor: "var(--card-bg)" }}>
+        <div className="flex gap-2">
+          <input
+            className="flex-1 px-3 py-2 border rounded-md text-sm"
+            style={{
+              borderColor: "var(--border)",
+              backgroundColor: "var(--input-bg)",
+              color: "var(--fg)",
+            }}
+            placeholder="Type a message..."
+          />
+          <Button size="sm" variant="primary">Send</Button>
+        </div>
+      </div>
+    </div>
+  );
+}

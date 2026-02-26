@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { AlertModal } from "@/components/ui/modal";
 import { Check, X, ListFilter, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useSession } from "next-auth/react";
 import { useAuditRealtime } from "@/lib/realtime/use-audit-realtime";
+import { useSession } from "@/lib/supabase/useSession";
 
 type RequestType = "CHAT" | "FRIEND" | "INVITE" | "JOIN" | "FILE" | "ALERT";
 type RequestStatus = "PENDING" | "ACCEPTED" | "DECLINED";

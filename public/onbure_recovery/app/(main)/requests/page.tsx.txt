@@ -1,0 +1,101 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Check, X, MessageCircle, UserPlus, Users } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+export default function RequestsPage() {
+    const [activeTab, setActiveTab] = useState<"chat" | "invites" | "applications">("chat");
+    const [data, setData] = useState<{ chat: any[]; invites: any[]; applications: any[] }>({ chat: [], invites: [], applications: [] });
+    const [loading, setLoading] = useState(true);
+
+    async function fetchRequests() {
+        const res = await fetch("/api/requests");
+        if (res.ok) {
+            setData(await res.json());
+        }
+        setLoading(false);
+    }
+
+    useEffect(() => {
+        fetchRequests();
+    }, []);
+
+    const handleAction = async (type: string, id: string, status: "ACCEPTED" | "DECLINED", extra?: any) => {
+        await fetch("/api/requests", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type, id, status, ...extra }),
+        });
+        fetchRequests();
+    };
+
+    const tabs = [
+        { id: "chat", label: "Chat Requests", icon: MessageCircle },
+        { id: "invites", label: "Team Invites", icon: UserPlus },
+        { id: "applications", label: "Applications", icon: Users },
+    ];
+
+    return (
+        <div className="space-y-6">
+            <h1 className="text-2xl font-bold text-white">Requests Inbox</h1>
+
+            <div className="flex border-b border-slate-800 gap-6">
+                {tabs.map(tab => (
+                    <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id as any)}
+                        className={cn(
+                            "flex items-center gap-2 pb-3 text-sm font-medium transition-colors border-b-2",
+                            activeTab === tab.id
+                                ? "border-violet-500 text-violet-400"
+                                : "border-transparent text-slate-400 hover:text-white"
+                        )}
+                    >
+                        <tab.icon className="w-4 h-4" />
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+
+            <div className="space-y-4">
+                {loading ? <div className="text-slate-400">Loading...</div> :
+                    data[activeTab]?.length === 0 ? (
+                        <div className="text-slate-400 py-10">No pending {activeTab}.</div>
+                    ) : (
+                        data[activeTab].map((req: any) => (
+                            <Card key={req.id} className="p-4 flex items-center justify-between">
+                                <div>
+                                    <p className="font-bold text-white text-sm">
+                                        {activeTab === "chat" && `Message from User` /* Replace with Name lookup */}
+                                        {activeTab === "invites" && `Invite to Team` /* Replace with Team Name */}
+                                    </p>
+                                    <p className="text-sm text-slate-400 mt-1">{req.message || "No message"}</p>
+                                </div>
+                                <div className="flex gap-2">
+                                    <Button
+                                        size="sm"
+                                        onClick={() => handleAction(req.type, req.requestId, "ACCEPTED", { teamId: req.teamId, userId: req.toId })}
+                                        className="bg-emerald-600 hover:bg-emerald-700 h-8 w-8 p-0 rounded-full"
+                                    >
+                                        <Check className="w-4 h-4" />
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleAction(req.type, req.requestId, "DECLINED")}
+                                        className="h-8 w-8 p-0 rounded-full"
+                                    >
+                                        <X className="w-4 h-4" />
+                                    </Button>
+                                </div>
+                            </Card>
+                        ))
+                    )
+                }
+            </div>
+        </div>
+    );
+}

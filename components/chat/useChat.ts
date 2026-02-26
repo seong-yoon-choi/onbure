@@ -1,11 +1,11 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useAuditRealtime } from "@/lib/realtime/use-audit-realtime";
 import { 
   Rect, DmUserItem, TeamItem, ThreadItem, MessageItem, ThreadDirectoryItem, DmReadReceipt, ProfileMenuState, OpenDmRequest 
 } from "./types";
 import { clamp, clampRange, toEpochMs, uniqueMessageKey, dedupeMessages, previewText, readSeenMap, writeSeenMap } from "./utils";
+import { useSession } from "@/lib/supabase/useSession";
 
 const STORAGE_KEY = "onbure.chatWidget.rect";
 

@@ -1,3 +1,5 @@
+import { getIubendaLegalUrl } from "@/lib/iubenda";
+
 export type SignupConsentRegion = "KR" | "CN" | "JP" | "US" | "EU";
 export type LegalDocSection = "terms" | "privacy" | "cookie" | "marketing" | "ads";
 
@@ -90,6 +92,10 @@ export function getConsentDetailLabel(region: SignupConsentRegion): string {
 }
 
 export function buildLegalDocLink(region: SignupConsentRegion, section: LegalDocSection): string {
+    if (section === "terms" || section === "privacy" || section === "cookie") {
+        const iubendaUrl = getIubendaLegalUrl(section);
+        if (iubendaUrl) return iubendaUrl;
+    }
     return `/legal/${String(region).toLowerCase()}#${section}`;
 }
 

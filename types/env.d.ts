@@ -4,6 +4,15 @@ declare namespace NodeJS {
         NEXT_PUBLIC_APP_NAME: string;
         NEXT_PUBLIC_APP_URL: string;
         DATA_BACKEND?: "supabase";
+        NEXT_PUBLIC_IUBENDA_ENABLED?: string;
+        NEXT_PUBLIC_IUBENDA_SITE_ID?: string;
+        NEXT_PUBLIC_IUBENDA_COOKIE_POLICY_ID?: string;
+        NEXT_PUBLIC_IUBENDA_LANG?: string;
+        NEXT_PUBLIC_IUBENDA_TERMS_URL?: string;
+        NEXT_PUBLIC_IUBENDA_PRIVACY_URL?: string;
+        NEXT_PUBLIC_IUBENDA_COOKIE_URL?: string;
+        NEXT_PUBLIC_IUBENDA_MARKETING_URL?: string;
+        NEXT_PUBLIC_IUBENDA_WIDGET_SCRIPT_URL?: string;
 
         // Auth
         NEXTAUTH_URL: string;
@@ -24,11 +33,10 @@ declare namespace NodeJS {
         GITHUB_CLIENT_SECRET?: string;
 
         // Email
-        SMTP_HOST?: string;
-        SMTP_PORT?: string;
-        SMTP_USER?: string;
-        SMTP_PASS?: string;
-        SMTP_FROM?: string;
+        RESEND_API_KEY?: string;
+        EMAIL_FROM?: string;
+        SMTP_FROM?: string; // Legacy fallback for email sender
+        EMAIL_VERIFICATION_SECRET?: string;
         EMAIL_ENABLED?: string; // "true" | "false"
 
         // Rate Limiting

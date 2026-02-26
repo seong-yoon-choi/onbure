@@ -531,9 +531,9 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
             <ConfirmModal
                 open={isCreateConfirmOpen}
                 title="Create Team"
-                message="정말 만드시겠습니까?"
+                message="Are you sure you want to create this team?"
                 confirmLabel={isSubmitting ? "Creating..." : "Create"}
-                cancelLabel="취소"
+                cancelLabel="Cancel"
                 isProcessing={isSubmitting}
                 onCancel={() => setIsCreateConfirmOpen(false)}
                 onConfirm={() => {

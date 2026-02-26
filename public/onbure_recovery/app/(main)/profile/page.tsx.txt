@@ -1,0 +1,230 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { User as UserIcon, Save, Loader2 } from "lucide-react";
+
+interface UserProfile {
+    username: string;
+    email: string;
+    country: string;
+    language: string;
+    skills: string[];
+    availabilityHours: string;
+    availabilityStart: string;
+    bio: string;
+    portfolioLinks: string[];
+}
+
+export default function ProfilePage() {
+    const { data: session, status } = useSession();
+    const router = useRouter();
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const [profile, setProfile] = useState<UserProfile>({
+        username: "",
+        email: "",
+        country: "",
+        language: "",
+        skills: [],
+        availabilityHours: "",
+        availabilityStart: "",
+        bio: "",
+        portfolioLinks: []
+    });
+
+    useEffect(() => {
+        if (status === "unauthenticated") {
+            router.push("/login");
+            return;
+        }
+        if (status === "authenticated") {
+            fetchProfile();
+        }
+    }, [status, router]);
+
+    const fetchProfile = async () => {
+        try {
+            const res = await fetch("/api/profile");
+            if (res.ok) {
+                const data = await res.json();
+                setProfile({
+                    username: data.username || data.name || "", // Fallback to name if older data
+                    email: data.email || "",
+                    country: data.country || "KR",
+                    language: data.language || "ko",
+                    skills: data.skills || [],
+                    availabilityHours: data.availabilityHours || "40+",
+                    availabilityStart: data.availabilityStart || "",
+                    bio: data.bio || "",
+                    portfolioLinks: data.portfolioLinks || []
+                });
+            }
+        } catch (error) {
+            console.error("Failed to load profile", error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            const res = await fetch("/api/profile", {
+                method: "PATCH", // or POST
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(profile)
+            });
+
+            if (!res.ok) throw new Error("Failed to save");
+
+            // Show success ?
+            alert("Profile saved successfully!");
+        } catch (error) {
+            alert("Failed to save profile.");
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    if (isLoading) {
+        return <div className="flex justify-center items-center h-full text-slate-400">Loading...</div>;
+    }
+
+    return (
+        <div className="max-w-4xl mx-auto p-8 space-y-8">
+            <header className="flex items-center justify-between border-b border-slate-800 pb-6">
+                <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 rounded-full bg-indigo-500/20 flex items-center justify-center text-indigo-400">
+                        <UserIcon className="w-8 h-8" />
+                    </div>
+                    <div>
+                        <h1 className="text-2xl font-bold text-white">{profile.username}</h1>
+                        <p className="text-slate-400">{profile.email}</p>
+                    </div>
+                </div>
+                <button
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="flex items-center gap-2 px-6 py-2 bg-violet-600 hover:brightness-95 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                >
+                    {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    Save Changes
+                </button>
+            </header>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                {/* Left Column: Essential */}
+                <div className="space-y-6">
+                    <h3 className="text-lg font-semibold text-emerald-400 uppercase tracking-wider text-xs">Essential</h3>
+
+                    <div className="space-y-2">
+                        <label className="text-sm text-slate-400">User Name *</label>
+                        <input
+                            type="text"
+                            value={profile.username}
+                            onChange={(e) => setProfile({ ...profile, username: e.target.value })}
+                            className="w-full bg-slate-900/50 border border-slate-800 rounded-md px-3 py-2 text-white focus:outline-none focus:border-violet-500"
+                        />
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-sm text-slate-400">Country *</label>
+                        <select
+                            value={profile.country}
+                            onChange={(e) => setProfile({ ...profile, country: e.target.value })}
+                            className="w-full bg-slate-900/50 border border-slate-800 rounded-md px-3 py-2 text-white focus:outline-none focus:border-violet-500"
+                        >
+                            <option value="KR">South Korea</option>
+                            <option value="US">United States</option>
+                            <option value="JP">Japan</option>
+                            {/* Add more as needed */}
+                        </select>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-sm text-slate-400">Language (Translation Target) *</label>
+                        <select
+                            value={profile.language}
+                            onChange={(e) => setProfile({ ...profile, language: e.target.value })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                        >
+                            <option value="ko">Korean</option>
+                            <option value="en">English</option>
+                            <option value="ja">Japanese</option>
+                        </select>
+                    </div>
+                </div>
+
+                {/* Middle Column: Recommended */}
+                <div className="space-y-6">
+                    <h3 className="text-lg font-semibold text-violet-400 uppercase tracking-wider text-xs">Recommended</h3>
+
+                    <div className="space-y-2">
+                        <label className="text-sm text-slate-400">Skills (Comma separated)</label>
+                        <input
+                            type="text"
+                            value={profile.skills.join(", ")}
+                            onChange={(e) => setProfile({ ...profile, skills: e.target.value.split(",").map(s => s.trim()) })}
+                            placeholder="React, Node.js, Design..."
+                            className="w-full bg-slate-900/50 border border-slate-800 rounded-md px-3 py-2 text-white focus:outline-none focus:border-violet-500"
+                        />
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-sm text-slate-400">Availability (Hrs/Week)</label>
+                        <select
+                            value={profile.availabilityHours}
+                            onChange={(e) => setProfile({ ...profile, availabilityHours: e.target.value })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                        >
+                            <option value="1-5">1-5 hours</option>
+                            <option value="6-10">6-10 hours</option>
+                            <option value="11-20">11-20 hours</option>
+                            <option value="21-40">21-40 hours</option>
+                            <option value="40+">40+ hours</option>
+                        </select>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-sm text-slate-400">Start Date</label>
+                        <input
+                            type="date"
+                            value={profile.availabilityStart ? new Date(profile.availabilityStart).toISOString().split('T')[0] : ""}
+                            onChange={(e) => setProfile({ ...profile, availabilityStart: e.target.value })}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                        />
+                    </div>
+                </div>
+
+                {/* Right Column: Optional */}
+                <div className="space-y-6">
+                    <h3 className="text-lg font-semibold text-slate-400 uppercase tracking-wider text-xs">Optional</h3>
+
+                    <div className="space-y-2">
+                        <label className="text-sm text-slate-400">Bio</label>
+                        <textarea
+                            value={profile.bio}
+                            onChange={(e) => setProfile({ ...profile, bio: e.target.value })}
+                            rows={4}
+                            className="w-full bg-slate-900/50 border border-slate-800 rounded-md px-3 py-2 text-white focus:outline-none focus:border-violet-500"
+                            placeholder="Tell us about yourself..."
+                        />
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-sm text-slate-400">Portfolio Links (One per line)</label>
+                        <textarea
+                            value={profile.portfolioLinks.join("\n")}
+                            onChange={(e) => setProfile({ ...profile, portfolioLinks: e.target.value.split("\n") })}
+                            rows={4}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-white focus:outline-none focus:border-indigo-500 bg-slate-800/50"
+                            placeholder="https://github.com/..."
+                        />
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}

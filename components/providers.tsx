@@ -1,7 +1,6 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { SessionProvider } from "next-auth/react";
 import { usePathname } from "next/navigation";
 import { reportClientError } from "@/lib/monitoring/client-errors";
 
@@ -23,6 +22,8 @@ function applyTheme(theme: Theme) {
     root.classList.toggle("dark", theme === "dark");
     root.style.colorScheme = theme;
 }
+
+import { SessionProvider } from "next-auth/react";
 
 export function Providers({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
@@ -112,8 +113,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
                 reason instanceof Error
                     ? reason.message
                     : typeof reason === "string"
-                      ? reason
-                      : "Unhandled promise rejection";
+                        ? reason
+                        : "Unhandled promise rejection";
             const key = `unhandled:${String(message).slice(0, 180)}`;
             if (!shouldReport(key)) return;
 
@@ -139,7 +140,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     const value = useMemo(() => ({ theme, setTheme }), [theme, setTheme]);
 
     return (
-        <SessionProvider refetchOnWindowFocus={false} refetchInterval={0}>
+        <SessionProvider>
             <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
         </SessionProvider>
     );
