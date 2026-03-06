@@ -52,15 +52,15 @@ type HomeCopy = {
 
 const HOME_COPY: Record<AppLanguage, HomeCopy> = {
   en: {
-    badge: "Built for startup teams and collaborators",
+    badge: "Built for bold teams and collaborators",
     navOpenApp: "Open the app",
     navLogIn: "Log in",
     navCreateAccount: "Create account",
-    title1: "Find collaborators,",
-    title2: "organize shared work,",
-    title3: "and keep every request moving.",
+    title1: "Find the right people,",
+    title2: "start your next project,",
+    title3: "and build it together with momentum.",
     description:
-      "Onbure is a web-based collaboration platform for teams that want a cleaner way to discover people, browse team spaces, and keep requests, files, and project context in one place.",
+      "Onbure helps you meet collaborators who share your energy, explore active teams, and turn early ideas into real projects with requests, workspaces, and shared context in one place.",
     heroOpenApp: "Open the app",
     heroCreateAccount: "Create account",
     miniDiscoveryTitle: "Discovery",
@@ -85,7 +85,7 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     sectionKicker: "Why teams use Onbure",
     sectionTitle: "A clearer collaboration layer for early-stage teams",
     sectionDescription:
-      "Use Onbure to let visitors understand the product quickly, then move them into discovery, requests, and shared workspaces when they are ready to explore.",
+      "From the first match to the first launch, Onbure helps teams gather fast, start projects confidently, and keep the energy moving.",
     feature1Title: "Discover the right collaborators",
     feature1Body:
       "Browse public teams and people profiles, review skills, and find a better match before you start working together.",
@@ -98,15 +98,15 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     languageAria: "Select language",
   },
   ko: {
-    badge: "스타트업 팀과 협업자를 위한 공간",
+    badge: "열정 있는 팀과 협업자를 위한 시작점",
     navOpenApp: "앱 둘러보기",
     navLogIn: "로그인",
     navCreateAccount: "계정 만들기",
-    title1: "함께할 사람을 찾고,",
-    title2: "공유된 일을 정리하고,",
-    title3: "모든 요청 흐름을 한곳에서 이어가세요.",
+    title1: "함께할 사람을 찾아서,",
+    title2: "여러분의 프로젝트를 시작하고,",
+    title3: "같이 끝까지 밀어붙여 보세요.",
     description:
-      "Onbure는 사람과 팀을 탐색하고, 팀 공간을 둘러보고, 요청과 파일, 프로젝트 맥락을 한곳에서 관리할 수 있게 돕는 웹 기반 협업 플랫폼입니다.",
+      "Onbure는 같은 열정과 협업 감각을 가진 사람들을 만나고, 팀을 둘러보고, 아이디어를 실제 프로젝트로 옮길 수 있도록 요청, 워크스페이스, 공유 흐름을 한곳에 모아둔 협업 플랫폼입니다.",
     heroOpenApp: "앱 둘러보기",
     heroCreateAccount: "계정 만들기",
     miniDiscoveryTitle: "탐색",
@@ -131,7 +131,7 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     sectionKicker: "왜 Onbure를 쓰는가",
     sectionTitle: "초기 팀을 위한 더 선명한 협업 레이어",
     sectionDescription:
-      "방문자가 제품을 빠르게 이해하고, 준비가 되면 discovery, requests, shared workspace로 자연스럽게 들어가도록 설계했습니다.",
+      "첫 만남부터 첫 실행까지, Onbure는 팀이 빠르게 모이고 자신 있게 프로젝트를 시작할 수 있도록 돕습니다.",
     feature1Title: "맞는 협업자를 더 쉽게 찾기",
     feature1Body:
       "공개 팀과 사람 프로필을 보고, 스킬을 비교하고, 함께 일하기 전에 더 잘 맞는 조합을 찾을 수 있습니다.",
@@ -144,15 +144,15 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     languageAria: "언어 선택",
   },
   ja: {
-    badge: "スタートアップチームとコラボレーターのための空間",
+    badge: "情熱あるチームと仲間のためのスタート地点",
     navOpenApp: "アプリを見る",
     navLogIn: "ログイン",
     navCreateAccount: "アカウント作成",
-    title1: "仲間を見つけ、",
-    title2: "共有作業を整理し、",
-    title3: "すべてのリクエストを一つの流れで進めましょう。",
+    title1: "一緒に走る仲間を見つけ、",
+    title2: "あなたのプロジェクトを動かし、",
+    title3: "最後までチームで進めましょう。",
     description:
-      "Onbure は、人とチームを探し、チームスペースを見て、リクエストやファイル、プロジェクトの文脈を一か所で管理できる Web コラボレーションプラットフォームです。",
+      "Onbure は、同じ熱量を持つ仲間と出会い、チームを探し、アイデアを本当のプロジェクトに変えるためのコラボレーションプラットフォームです。リクエスト、ワークスペース、共有の流れを一つにまとめます。",
     heroOpenApp: "アプリを見る",
     heroCreateAccount: "アカウント作成",
     miniDiscoveryTitle: "探索",
@@ -177,7 +177,7 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     sectionKicker: "Onbure が選ばれる理由",
     sectionTitle: "初期チームのための、より明確なコラボレーションレイヤー",
     sectionDescription:
-      "訪問者が製品をすばやく理解し、準備ができたら discovery、requests、shared workspace に自然に進めるように設計しています。",
+      "最初の出会いから最初の実行まで、Onbure はチームが素早く集まり、そのままプロジェクトを始められるようにします。",
     feature1Title: "適したコラボレーターを見つけやすい",
     feature1Body:
       "公開チームや人物プロフィールを見て、スキルを確認し、共同作業を始める前に相性の良い組み合わせを探せます。",
@@ -190,15 +190,15 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     languageAria: "言語を選択",
   },
   fr: {
-    badge: "Conçu pour les équipes startup et les collaborateurs",
+    badge: "Le point de départ pour des équipes et collaborateurs ambitieux",
     navOpenApp: "Ouvrir l'app",
     navLogIn: "Connexion",
     navCreateAccount: "Créer un compte",
-    title1: "Trouvez les bons collaborateurs,",
-    title2: "organisez le travail partagé,",
-    title3: "et faites avancer chaque demande au même endroit.",
+    title1: "Trouvez les bonnes personnes,",
+    title2: "lancez votre prochain projet,",
+    title3: "et faites-le avancer ensemble.",
     description:
-      "Onbure est une plateforme web de collaboration qui aide les équipes à découvrir des personnes, explorer des espaces d'équipe et gérer les demandes, les fichiers et le contexte projet en un seul endroit.",
+      "Onbure réunit des collaborateurs qui partagent la même énergie, aide à explorer les équipes et transforme une idée en vrai projet grâce aux demandes, aux workspaces et à un flux partagé au même endroit.",
     heroOpenApp: "Ouvrir l'app",
     heroCreateAccount: "Créer un compte",
     miniDiscoveryTitle: "Découverte",
@@ -223,7 +223,7 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     sectionKicker: "Pourquoi les équipes utilisent Onbure",
     sectionTitle: "Une couche de collaboration plus claire pour les équipes en phase de lancement",
     sectionDescription:
-      "La page d'accueil présente rapidement le produit, puis guide naturellement vers discovery, requests et les espaces partagés quand le visiteur veut aller plus loin.",
+      "De la première rencontre au premier lancement, Onbure aide les équipes à se rassembler vite et à démarrer un projet sans perdre l'élan.",
     feature1Title: "Trouver plus facilement les bons collaborateurs",
     feature1Body:
       "Parcourez des équipes publiques et des profils, comparez les compétences et identifiez un meilleur fit avant de collaborer.",
@@ -236,15 +236,15 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     languageAria: "Choisir la langue",
   },
   es: {
-    badge: "Pensado para equipos startup y colaboradores",
+    badge: "El punto de partida para equipos y colaboradores con impulso",
     navOpenApp: "Abrir la app",
     navLogIn: "Iniciar sesión",
     navCreateAccount: "Crear cuenta",
-    title1: "Encuentra colaboradores,",
-    title2: "organiza el trabajo compartido,",
-    title3: "y mueve cada solicitud desde un solo lugar.",
+    title1: "Encuentra a las personas correctas,",
+    title2: "pon en marcha tu proyecto,",
+    title3: "y hazlo avanzar en equipo.",
     description:
-      "Onbure es una plataforma web de colaboración para equipos que quieren descubrir personas, explorar espacios de equipo y gestionar solicitudes, archivos y contexto de proyecto en un solo lugar.",
+      "Onbure conecta a colaboradores con la misma energía, te deja explorar equipos y convertir una idea en un proyecto real con solicitudes, workspaces y un flujo compartido en un solo lugar.",
     heroOpenApp: "Abrir la app",
     heroCreateAccount: "Crear cuenta",
     miniDiscoveryTitle: "Discovery",
@@ -269,7 +269,7 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     sectionKicker: "Por qué los equipos usan Onbure",
     sectionTitle: "Una capa de colaboración más clara para equipos en etapa inicial",
     sectionDescription:
-      "La página principal explica el producto rápidamente y luego guía a discovery, requests y espacios compartidos cuando el visitante está listo para explorar.",
+      "Desde el primer match hasta la primera ejecución, Onbure ayuda a los equipos a reunirse rápido y empezar proyectos sin perder impulso.",
     feature1Title: "Descubre a los colaboradores adecuados",
     feature1Body:
       "Explora equipos públicos y perfiles personales, revisa habilidades y encuentra un mejor encaje antes de empezar a colaborar.",
@@ -360,7 +360,7 @@ export default function HomePageClient() {
               {copy.navOpenApp}
             </Link>
             <Link
-              className="text-slate-600 transition hover:text-slate-950"
+              className="inline-flex items-center rounded-full border border-slate-300 bg-white/80 px-4 py-2 font-medium text-slate-900 transition hover:border-slate-400 hover:bg-white"
               href="/login"
             >
               {copy.navLogIn}
