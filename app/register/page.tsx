@@ -7,13 +7,16 @@ import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Eye, EyeOff, UserPlus, CheckCircle2 } from "lucide-react";
+import { Eye, EyeOff, UserPlus, CheckCircle2, Globe } from "lucide-react";
+import { useLanguage } from "@/components/providers";
 import {
     ALL_SIGNUP_COUNTRIES,
     resolveSignupConsentRegion,
     isCookieConsentRequired,
 } from "@/lib/signup-consent";
 import { getIubendaLegalUrl } from "@/lib/iubenda";
+import { APP_LANGUAGES } from "@/lib/i18n/messages";
+import { normalizeLanguage } from "@/lib/i18n";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEFAULT_IUBENDA_PRIVACY_URL = "https://www.iubenda.com/privacy-policy/31787811";
@@ -22,6 +25,7 @@ const EMAIL_RESEND_COOLDOWN_SECONDS = 30;
 
 export default function RegisterPage() {
     const router = useRouter();
+    const { t, language, setLanguage } = useLanguage();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [email, setEmail] = useState("");
@@ -94,12 +98,12 @@ export default function RegisterPage() {
                 headers: { "Content-Type": "application/json" },
             });
             const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.error || "Failed to send code");
+            if (!res.ok) throw new Error(data.error || t("auth.register.error.sendCodeFailed"));
 
             setVerificationStep("otp");
             setOtp("");
             setResendCooldown(EMAIL_RESEND_COOLDOWN_SECONDS);
-            setVerificationMsg("Verification code sent to your email.");
+            setVerificationMsg(t("auth.register.codeSent"));
         } catch (err: any) {
             setError(err.message);
         } finally {
@@ -118,7 +122,7 @@ export default function RegisterPage() {
                 headers: { "Content-Type": "application/json" },
             });
             const data = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(data.error || "Invalid code");
+            if (!res.ok) throw new Error(data.error || t("auth.register.error.invalidCode"));
 
             setIsEmailVerified(true);
             setVerificationMsg("");
@@ -134,20 +138,20 @@ export default function RegisterPage() {
         setError("");
 
         if (!isEmailVerified) {
-            setError("Please verify your email address first.");
+            setError(t("auth.register.error.verifyEmailFirst"));
             return;
         }
 
         if (!isOver14) {
-            setError("You must be at least 14 years old to register.");
+            setError(t("auth.register.error.over14Required"));
             return;
         }
         if (!isPrivacyAgreed) {
-            setError("You must agree to the Privacy Policy.");
+            setError(t("auth.register.error.privacyRequired"));
             return;
         }
         if (cookieRequired && !isCookieAgreed) {
-            setError("You must agree to the Cookie Policy.");
+            setError(t("auth.register.error.cookieRequired"));
             return;
         }
 
@@ -174,13 +178,14 @@ export default function RegisterPage() {
                     cookieAgreed: isCookieAgreed,
                     marketingDataConsent: isMarketingConsent,
                     adsReceiveConsent: isMarketingConsent,
+                    language: normalizeLanguage(document.documentElement.lang),
                 }),
                 headers: { "Content-Type": "application/json" },
             });
 
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                throw new Error(String(data?.error || "Registration failed"));
+                throw new Error(String(data?.error || t("auth.register.error.registrationFailed")));
             }
 
             const loginRes = await signIn("credentials", {
@@ -190,36 +195,64 @@ export default function RegisterPage() {
             });
 
             if (loginRes?.error) {
-                throw new Error("Login failed");
+                throw new Error(t("auth.register.error.loginFailed"));
             }
 
             router.push("/discovery");
         } catch (err: any) {
-            setError(String(err?.message || "Registration failed"));
+            setError(String(err?.message || t("auth.register.error.registrationFailed")));
         } finally {
             setLoading(false);
         }
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-[url('/grid.svg')] bg-center">
-            <div className="w-full max-w-md space-y-8">
+        <div className="relative min-h-screen flex items-center justify-center p-4 bg-[url('/grid.svg')] bg-center">
+            <div className="absolute top-6 left-6 right-6 md:top-8 md:left-8 md:right-8 z-10 flex items-center justify-between">
+                <Link href="/" className="text-xl font-bold bg-gradient-to-r from-violet-500 to-emerald-500 bg-clip-text text-transparent hover:opacity-80 transition-opacity">
+                    Onbure
+                </Link>
+                <div className="flex items-center gap-2">
+                    <Globe className="w-4 h-4 text-[var(--muted)]" />
+                    <select
+                        value={language}
+                        onChange={(e) => setLanguage(normalizeLanguage(e.target.value))}
+                        className="bg-transparent border-none text-sm text-[var(--muted)] hover:text-[var(--fg)] focus:outline-none focus:ring-0 cursor-pointer"
+                        aria-label="Select Language"
+                    >
+                        {APP_LANGUAGES.map((code) => (
+                            <option key={code} value={code} className="bg-[var(--card-bg)] text-[var(--fg)]">
+                                {code === "ko"
+                                    ? t("language.korean")
+                                    : code === "ja"
+                                        ? t("language.japanese")
+                                        : code === "fr"
+                                            ? t("language.french")
+                                            : code === "es"
+                                                ? t("language.spanish")
+                                                : t("language.english")}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+            <div className="w-full max-w-md space-y-8 mt-12 md:mt-0">
                 <div className="text-center space-y-2">
                     <div className="flex justify-center">
                         <div className="bg-emerald-500/10 p-4 rounded-2xl ring-1 ring-emerald-500/20">
                             <UserPlus className="w-8 h-8 text-emerald-500" />
                         </div>
                     </div>
-                    <h1 className="text-3xl font-bold tracking-tight text-[var(--fg)] mt-6">Create account</h1>
-                    <p className="text-[var(--muted)]">Join Onbure and start collaborating</p>
+                    <h1 className="text-3xl font-bold tracking-tight text-[var(--fg)] mt-6">{t("auth.register.title")}</h1>
+                    <p className="text-[var(--muted)]">{t("auth.register.subtitle")}</p>
                 </div>
 
                 <Card className="p-8 space-y-6">
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <Input
                             name="username"
-                            label="User Name"
-                            placeholder="JohnDoe"
+                            label={t("auth.register.usernameLabel")}
+                            placeholder={t("auth.register.usernamePlaceholder")}
                             required
                         />
 
@@ -229,8 +262,8 @@ export default function RegisterPage() {
                                     <Input
                                         name="email"
                                         type="email"
-                                        label="Email"
-                                        placeholder="name@example.com"
+                                        label={t("auth.common.emailLabel")}
+                                        placeholder={t("auth.common.emailPlaceholder")}
                                         value={email}
                                         onChange={(event) => {
                                             if (!isEmailVerified) setEmail(event.target.value);
@@ -247,13 +280,13 @@ export default function RegisterPage() {
                                         disabled={!isEmailValid || isSendingCode}
                                         className="mb-0.5"
                                     >
-                                        {isSendingCode ? "Sending..." : "Send Code"}
+                                        {isSendingCode ? t("common.sending") : t("auth.register.sendCode")}
                                     </Button>
                                 )}
                                 {isEmailVerified && (
                                     <div className="flex items-center gap-1.5 px-3 py-2 text-emerald-500 text-sm font-medium mb-0.5">
                                         <CheckCircle2 className="w-4 h-4" />
-                                        Verified
+                                        {t("auth.register.verified")}
                                     </div>
                                 )}
                             </div>
@@ -262,7 +295,7 @@ export default function RegisterPage() {
                                 <div className="flex items-center gap-2 mt-2">
                                     <div className="flex-1">
                                         <Input
-                                            placeholder="Enter 6-digit code"
+                                            placeholder={t("auth.register.otpPlaceholder")}
                                             value={otp}
                                             onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
                                             maxLength={6}
@@ -273,7 +306,7 @@ export default function RegisterPage() {
                                         onClick={verifyEmailCode}
                                         disabled={otp.length < 6 || isVerifyingCode}
                                     >
-                                        {isVerifyingCode ? "Verifying..." : "Verify"}
+                                        {isVerifyingCode ? t("common.verifying") : t("auth.register.verify")}
                                     </Button>
                                     <Button
                                         type="button"
@@ -284,10 +317,10 @@ export default function RegisterPage() {
                                         className="text-xs text-[var(--muted)]"
                                     >
                                         {isSendingCode
-                                            ? "Sending..."
+                                            ? t("common.sending")
                                             : resendCooldown > 0
-                                                ? `Resend in ${resendCooldown}s`
-                                                : "Resend code"}
+                                                ? t("auth.register.resendIn", { seconds: resendCooldown })
+                                                : t("auth.register.resendCode")}
                                     </Button>
                                 </div>
                             )}
@@ -299,14 +332,14 @@ export default function RegisterPage() {
 
                         <div className="w-full space-y-1.5">
                             <label htmlFor={passwordInputId} className="text-xs font-medium text-[var(--muted)] uppercase tracking-wider ml-1">
-                                Password
+                                {t("auth.common.passwordLabel")}
                             </label>
                             <div className="relative">
                                 <input
                                     id={passwordInputId}
                                     name="password"
                                     type={showPassword ? "text" : "password"}
-                                    placeholder="Minimum 8 characters"
+                                    placeholder={t("auth.register.passwordPlaceholder")}
                                     required
                                     minLength={8}
                                     autoComplete="new-password"
@@ -318,19 +351,20 @@ export default function RegisterPage() {
                                 <button
                                     type="button"
                                     onClick={() => setShowPassword((prev) => !prev)}
+                                    aria-label={showPassword ? t("auth.login.hidePasswordAria") : t("auth.login.showPasswordAria")}
                                     className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--fg)]"
                                 >
                                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                 </button>
                             </div>
                             {capsLockOn && (
-                                <p className="ml-1 text-xs text-amber-500">Caps Lock is on.</p>
+                                <p className="ml-1 text-xs text-amber-500">{t("auth.common.capsLockOn")}</p>
                             )}
                         </div>
 
                         <div className="w-full space-y-1.5">
                             <label htmlFor={genderInputId} className="text-xs font-medium text-[var(--muted)] uppercase tracking-wider ml-1">
-                                Gender
+                                {t("auth.register.genderLabel")}
                             </label>
                             <select
                                 id={genderInputId}
@@ -340,11 +374,11 @@ export default function RegisterPage() {
                                 defaultValue=""
                             >
                                 <option value="" disabled>
-                                    Select gender
+                                    {t("profile.genderSelect")}
                                 </option>
-                                <option value="male">Male</option>
-                                <option value="female">Female</option>
-                                <option value="other">Other</option>
+                                <option value="male">{t("profile.genderMale")}</option>
+                                <option value="female">{t("profile.genderFemale")}</option>
+                                <option value="other">{t("profile.genderOther")}</option>
                             </select>
                         </div>
 
@@ -353,8 +387,8 @@ export default function RegisterPage() {
                             type="text"
                             inputMode="numeric"
                             pattern="[0-9]*"
-                            label="Age"
-                            placeholder="Enter age"
+                            label={t("profile.age")}
+                            placeholder={t("profile.agePlaceholder")}
                             required
                             maxLength={3}
                             onInput={(event) => {
@@ -365,7 +399,7 @@ export default function RegisterPage() {
 
                         <div className="w-full space-y-1.5">
                             <label htmlFor={countryInputId} className="text-xs font-medium text-[var(--muted)] uppercase tracking-wider ml-1">
-                                Country
+                                {t("profile.country")}
                             </label>
                             <select
                                 id={countryInputId}
@@ -386,7 +420,7 @@ export default function RegisterPage() {
                         {/* Consent Checkboxes */}
                         <div className="space-y-3 pt-2 border-t border-[var(--border)]">
                             <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider ml-1 mb-1">
-                                Consents
+                                {t("auth.register.consents")}
                             </p>
 
                             <label className="flex items-start gap-2 cursor-pointer group">
@@ -397,7 +431,7 @@ export default function RegisterPage() {
                                     className="mt-1 w-4 h-4 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--ring)]"
                                 />
                                 <span className="text-sm text-[var(--fg)]">
-                                    I confirm I am at least 14 years old. (Required)
+                                    {t("auth.register.consent.over14")}
                                 </span>
                             </label>
 
@@ -409,16 +443,17 @@ export default function RegisterPage() {
                                     className="mt-1 w-4 h-4 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--ring)]"
                                 />
                                 <span className="text-sm text-[var(--fg)]">
-                                    I agree to the{" "}
+                                    {t("auth.register.consent.agreeTo")}{" "}
                                     <Link
                                         href={privacyLink}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className={getLegalLinkClassName(privacyLink)}
                                     >
-                                        Privacy Policy
+                                        {t("auth.register.privacyPolicy")}
                                     </Link>
-                                    . (Required)
+                                    {" "}
+                                    {t("auth.register.consent.required")}
                                 </span>
                             </label>
 
@@ -430,16 +465,19 @@ export default function RegisterPage() {
                                     className="mt-1 w-4 h-4 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--ring)]"
                                 />
                                 <span className="text-sm text-[var(--fg)]">
-                                    I agree to the{" "}
+                                    {t("auth.register.consent.agreeTo")}{" "}
                                     <Link
                                         href={cookieLink}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className={getLegalLinkClassName(cookieLink)}
                                     >
-                                        Cookie Policy
+                                        {t("auth.register.cookiePolicy")}
                                     </Link>
-                                    {cookieRequired ? ". (Required in your region)" : ". (Optional)"}
+                                    {" "}
+                                    {cookieRequired
+                                        ? t("auth.register.consent.requiredRegion")
+                                        : t("auth.register.consent.optional")}
                                 </span>
                             </label>
 
@@ -451,16 +489,17 @@ export default function RegisterPage() {
                                     className="mt-1 w-4 h-4 rounded border-[var(--border)] text-[var(--primary)] focus:ring-[var(--ring)]"
                                 />
                                 <span className="text-sm text-[var(--fg)]">
-                                    I agree to{" "}
+                                    {t("auth.register.consent.marketing")}{" "}
                                     <Link
                                         href={marketingCommunicationsLink}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className={getLegalLinkClassName(marketingCommunicationsLink)}
                                     >
-                                        marketing communications
+                                        {t("auth.register.marketingLinkLabel")}
                                     </Link>
-                                    . (Optional)
+                                    {" "}
+                                    {t("auth.register.consent.optional")}
                                 </span>
                             </label>
                         </div>
@@ -472,14 +511,14 @@ export default function RegisterPage() {
                         )}
 
                         <Button type="submit" className="w-full" size="lg" isLoading={loading} disabled={!isEmailVerified}>
-                            Sign Up
+                            {t("auth.register.submit")}
                         </Button>
                     </form>
 
                     <div className="text-center text-sm">
-                        <span className="text-[var(--muted)]">Already have an account? </span>
+                        <span className="text-[var(--muted)]">{t("auth.register.hasAccount")} </span>
                         <Link href="/login" className="text-[var(--primary)] hover:opacity-90 font-medium">
-                            Sign in
+                            {t("auth.register.signIn")}
                         </Link>
                     </div>
                 </Card>

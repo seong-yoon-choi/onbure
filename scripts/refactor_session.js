@@ -1,4 +1,4 @@
-const { Project } = require("ts-morph");
+import { Project } from "ts-morph";
 
 function run() {
     const project = new Project({
@@ -32,7 +32,7 @@ function run() {
 
         // Add Supabase import if we need it (if we have a session check)
         // We'll figure this out by looking for getServerSession calls first
-        const callExpressions = sourceFile.getDescendantsOfKind(require("ts-morph").SyntaxKind.CallExpression);
+        const callExpressions = sourceFile.getDescendantsOfKind(Project.SyntaxKind?.CallExpression || 210);
         const sessionCalls = callExpressions.filter(c => {
             const exp = c.getExpression();
             return exp.getText() === "getServerSession";

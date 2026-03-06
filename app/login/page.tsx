@@ -7,10 +7,14 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Eye, EyeOff, LockKeyhole } from "lucide-react";
+import { Eye, EyeOff, LockKeyhole, Globe } from "lucide-react";
+import { useLanguage } from "@/components/providers";
+import { APP_LANGUAGES } from "@/lib/i18n/messages";
+import { normalizeLanguage } from "@/lib/i18n";
 
 export default function LoginPage() {
     const router = useRouter();
+    const { t, language, setLanguage } = useLanguage();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [showPassword, setShowPassword] = useState(false);
@@ -37,24 +41,64 @@ export default function LoginPage() {
         });
 
         if (res?.error) {
-            setError("Invalid credentials");
+            setError(t("auth.login.invalidCredentials"));
             setLoading(false);
         } else {
+            // Update profile with the selected language
+            try {
+                const currentLang = normalizeLanguage(document.documentElement.lang);
+                await fetch("/api/profile", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ language: currentLang })
+                });
+            } catch (err) {
+                // Non-blocking error
+                console.error("Failed to sync language on login", err);
+            }
             router.push("/discovery");
         }
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-[url('/grid.svg')] bg-center">
-            <div className="w-full max-w-md space-y-8">
+        <div className="relative min-h-screen flex items-center justify-center p-4 bg-[url('/grid.svg')] bg-center">
+            <div className="absolute top-6 left-6 right-6 md:top-8 md:left-8 md:right-8 z-10 flex items-center justify-between">
+                <Link href="/" className="text-xl font-bold bg-gradient-to-r from-violet-500 to-emerald-500 bg-clip-text text-transparent hover:opacity-80 transition-opacity">
+                    Onbure
+                </Link>
+                <div className="flex items-center gap-2">
+                    <Globe className="w-4 h-4 text-[var(--muted)]" />
+                    <select
+                        value={language}
+                        onChange={(e) => setLanguage(normalizeLanguage(e.target.value))}
+                        className="bg-transparent border-none text-sm text-[var(--muted)] hover:text-[var(--fg)] focus:outline-none focus:ring-0 cursor-pointer"
+                        aria-label="Select Language"
+                    >
+                        {APP_LANGUAGES.map((code) => (
+                            <option key={code} value={code} className="bg-[var(--card-bg)] text-[var(--fg)]">
+                                {code === "ko"
+                                    ? t("language.korean")
+                                    : code === "ja"
+                                        ? t("language.japanese")
+                                        : code === "fr"
+                                            ? t("language.french")
+                                            : code === "es"
+                                                ? t("language.spanish")
+                                                : t("language.english")}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+            <div className="w-full max-w-md space-y-8 mt-12 md:mt-0">
                 <div className="text-center space-y-2">
                     <div className="flex justify-center">
                         <div className="bg-[var(--primary)]/10 p-4 rounded-2xl ring-1 ring-[var(--primary)]/20">
                             <LockKeyhole className="w-8 h-8 text-[var(--primary)]" />
                         </div>
                     </div>
-                    <h1 className="text-3xl font-bold tracking-tight text-[var(--fg)] mt-6">Welcome back</h1>
-                    <p className="text-[var(--muted)]">Sign in to your account</p>
+                    <h1 className="text-3xl font-bold tracking-tight text-[var(--fg)] mt-6">{t("auth.login.title")}</h1>
+                    <p className="text-[var(--muted)]">{t("auth.login.subtitle")}</p>
                 </div>
 
                 <Card className="p-8 space-y-6">
@@ -62,20 +106,20 @@ export default function LoginPage() {
                         <Input
                             name="email"
                             type="email"
-                            label="Email"
-                            placeholder="name@example.com"
+                            label={t("auth.common.emailLabel")}
+                            placeholder={t("auth.common.emailPlaceholder")}
                             required
                         />
                         <div className="w-full space-y-1.5">
                             <label htmlFor={passwordInputId} className="text-xs font-medium text-[var(--muted)] uppercase tracking-wider ml-1">
-                                Password
+                                {t("auth.common.passwordLabel")}
                             </label>
                             <div className="relative">
                                 <input
                                     id={passwordInputId}
                                     name="password"
                                     type={showPassword ? "text" : "password"}
-                                    placeholder="Enter your password"
+                                    placeholder={t("auth.login.passwordPlaceholder")}
                                     required
                                     onKeyDown={handlePasswordKeyState}
                                     onKeyUp={handlePasswordKeyState}
@@ -85,14 +129,14 @@ export default function LoginPage() {
                                 <button
                                     type="button"
                                     onClick={() => setShowPassword((prev) => !prev)}
-                                    aria-label={showPassword ? "Hide password" : "Show password"}
+                                    aria-label={showPassword ? t("auth.login.hidePasswordAria") : t("auth.login.showPasswordAria")}
                                     className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-6 w-6 items-center justify-center rounded text-[var(--muted)] hover:text-[var(--fg)]"
                                 >
                                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                 </button>
                             </div>
                             {capsLockOn && (
-                                <p className="ml-1 text-xs text-amber-500">Caps Lock is on.</p>
+                                <p className="ml-1 text-xs text-amber-500">{t("auth.common.capsLockOn")}</p>
                             )}
                         </div>
 
@@ -103,7 +147,7 @@ export default function LoginPage() {
                         )}
 
                         <Button type="submit" className="w-full" size="lg" isLoading={loading}>
-                            Sign In
+                            {t("auth.login.submit")}
                         </Button>
                     </form>
 
@@ -112,14 +156,14 @@ export default function LoginPage() {
                             <span className="w-full border-t border-[var(--border)]" />
                         </div>
                         <div className="relative flex justify-center text-xs uppercase">
-                            <span className="bg-[var(--card-bg)] px-2 text-[var(--muted)]">Or</span>
+                            <span className="bg-[var(--card-bg)] px-2 text-[var(--muted)]">{t("auth.common.or")}</span>
                         </div>
                     </div>
 
                     <div className="text-center text-sm">
-                        <span className="text-[var(--muted)]">Don&apos;t have an account? </span>
+                        <span className="text-[var(--muted)]">{t("auth.login.noAccount")} </span>
                         <Link href="/register" className="text-[var(--primary)] hover:opacity-90 font-medium">
-                            Create account
+                            {t("auth.login.createAccount")}
                         </Link>
                     </div>
                 </Card>

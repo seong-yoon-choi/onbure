@@ -1,4 +1,4 @@
-import { notion, getDatabaseId, getTextValue } from "@/lib/notion-client";
+import { notion, getDatabaseId, getTextValue } from "@/lib/db/notion-compat";
 import { isSupabaseBackend } from "@/lib/db/backend";
 import { supabaseRest } from "@/lib/supabase-rest";
 import { getSignedUrlFromStoragePointer, parseSupabaseStoragePointer } from "@/lib/supabase-storage";

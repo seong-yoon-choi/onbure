@@ -13,16 +13,13 @@ export async function GET(
     { params }: { params: Promise<{ userId: string }> }
 ) {
     const session = await getServerSession(authOptions);
-    if (!session) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
 
     const { userId } = await params;
     if (!userId) {
         return NextResponse.json({ error: "userId is required." }, { status: 400 });
     }
 
-    const currentUserId = (session.user as any)?.id as string | undefined;
+    const currentUserId = (session?.user as any)?.id as string | undefined;
     const user = await getUserByUserId(userId);
     if (!user) {
         return NextResponse.json({ error: "User not found." }, { status: 404 });

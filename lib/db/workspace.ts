@@ -1,4 +1,4 @@
-import { notion, getDatabaseId, getTextValue, getSelectValue } from "@/lib/notion-client";
+import { notion, getDatabaseId, getTextValue, getSelectValue } from "@/lib/db/notion-compat";
 import { isSupabaseBackend } from "@/lib/db/backend";
 import { supabaseRest } from "@/lib/supabase-rest";
 import {
@@ -132,6 +132,7 @@ export async function getFiles(teamId: string, options?: WorkspaceFileOptions) {
                     title: row.title || "Untitled",
                     url: resolvedUrl,
                     folderId: row.folder_id || undefined,
+                    ownerUserId: row.owner_user_id || undefined,
                     createdAt: row.created_at,
                 };
             })
@@ -189,6 +190,48 @@ export async function createFile(teamId: string, title: string, _url: string, op
     return fileId;
 }
 
+export async function cloneUserFileToTeam(teamId: string, sourceFileId: string, ownerUserId: string) {
+    const normalizedTeamId = String(teamId || "").trim();
+    const normalizedSourceFileId = String(sourceFileId || "").trim();
+    const normalizedOwnerUserId = String(ownerUserId || "").trim();
+    if (!normalizedTeamId || !normalizedSourceFileId || !normalizedOwnerUserId) return null;
+
+    if (isSupabaseBackend()) {
+        const sourceRows = (await supabaseRest(
+            `/workspace_files?select=file_id,title,url&team_id=eq.${encodeURIComponent(normalizedTeamId)}&file_id=eq.${encodeURIComponent(normalizedSourceFileId)}&scope=eq.user&owner_user_id=eq.${encodeURIComponent(normalizedOwnerUserId)}&limit=1`
+        )) as Array<{ file_id: string; title: string | null; url: string | null }>;
+        const source = sourceRows[0];
+        if (!source) return null;
+
+        const normalizedTitle =
+            String(source.title || "").trim().replace(/\s+/g, " ").slice(0, 120) || "Untitled";
+        const normalizedUrl = String(source.url || "").trim() || null;
+
+        const teamFileId = uuidv4();
+        await supabaseRest("/workspace_files", {
+            method: "POST",
+            prefer: "return=minimal",
+            body: {
+                file_id: teamFileId,
+                team_id: normalizedTeamId,
+                title: normalizedTitle,
+                url: normalizedUrl,
+                scope: "team",
+                owner_user_id: normalizedOwnerUserId,
+            },
+        });
+
+        return {
+            id: teamFileId,
+            title: normalizedTitle,
+            url: normalizedUrl || "",
+            ownerUserId: normalizedOwnerUserId,
+        };
+    }
+
+    return null;
+}
+
 export async function renameFile(teamId: string, fileId: string, title: string, options?: WorkspaceFileOptions) {
     if (!teamId || !fileId) return;
     const normalizedTitle = String(title || "").trim().replace(/\s+/g, " ").slice(0, 120);
@@ -242,10 +285,10 @@ export async function renameFile(teamId: string, fileId: string, title: string, 
 }
 
 export async function deleteFile(teamId: string, fileId: string, options?: WorkspaceFileOptions) {
-    if (!teamId || !fileId) return;
+    if (!teamId || !fileId) return false;
     const { scope, ownerUserId } = resolveWorkspaceFileOptions(options);
 
-    if (scope === "user" && !ownerUserId) return;
+    if (scope === "user" && !ownerUserId) return false;
 
     if (isSupabaseBackend()) {
         const ownerFilter =
@@ -256,7 +299,7 @@ export async function deleteFile(teamId: string, fileId: string, options?: Works
             `/workspace_files?select=file_id,title,url&team_id=eq.${encodeURIComponent(teamId)}&file_id=eq.${encodeURIComponent(fileId)}${ownerFilter}&limit=1`
         )) as Array<{ file_id: string; title: string | null; url: string | null }>;
         const target = targetRows[0];
-        if (!target) return;
+        if (!target) return false;
 
         const deleteStoragePointerIfNeeded = async (rawUrl: string | null | undefined) => {
             const url = String(rawUrl || "").trim();
@@ -297,7 +340,7 @@ export async function deleteFile(teamId: string, fileId: string, options?: Works
                 prefer: "return=minimal",
             }
         );
-        return;
+        return true;
     }
 
     try {
@@ -305,7 +348,7 @@ export async function deleteFile(teamId: string, fileId: string, options?: Works
             page_id: fileId,
             archived: true,
         });
-        return;
+        return true;
     } catch {
         // Fallback for older records where callers might pass file_id instead of page id.
     }
@@ -322,12 +365,13 @@ export async function deleteFile(teamId: string, fileId: string, options?: Works
     });
 
     const target = res.results[0];
-    if (!target) return;
+    if (!target) return false;
 
     await notion.pages.update({
         page_id: target.id,
         archived: true,
     });
+    return true;
 }
 
 export async function moveFileToFolder(

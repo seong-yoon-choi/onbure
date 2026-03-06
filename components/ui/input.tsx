@@ -1,4 +1,4 @@
-import { InputHTMLAttributes, forwardRef, useId } from "react";
+import { InputHTMLAttributes, forwardRef } from "react";
 import { cn } from "@/lib/utils";
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
@@ -6,11 +6,20 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
     error?: string;
 }
 
+function toIdToken(value: string): string {
+    return value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+}
+
 export const Input = forwardRef<HTMLInputElement, InputProps>(
     ({ className, label, error, id, ...props }, ref) => {
-        const generatedId = useId();
-        const inputId = id || `onbure-input-${generatedId}`;
-        const errorId = error ? `${inputId}-error` : undefined;
+        const rawName = typeof props.name === "string" ? props.name : "";
+        const fallbackToken = toIdToken(rawName || label || "");
+        const inputId = id || (fallbackToken ? `onbure-input-${fallbackToken}` : undefined);
+        const errorId = error && inputId ? `${inputId}-error` : undefined;
         const describedBy = [props["aria-describedby"], errorId].filter(Boolean).join(" ").trim() || undefined;
 
         return (

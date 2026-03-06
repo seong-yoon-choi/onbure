@@ -8,11 +8,41 @@ import { ChatSidebar } from "./ChatSidebar";
 import { ChatHeader } from "./ChatHeader";
 import { ChatMessageList } from "./ChatMessageList";
 import { ChatInputArea } from "./ChatInputArea";
+import { useLanguage } from "@/components/providers";
 
 export default function ChatWidget({ isOpen, onClose, openDmRequest }: { isOpen: boolean; onClose: () => void; openDmRequest?: OpenDmRequest | null }) {
+  const { t } = useLanguage();
   const chat = useChat({ isOpen, onClose, openDmRequest });
-  if (!chat) return null;
-  const { rect, isDragging, isCompact, handleResizeStart, handleDragStart, saveRect, profileMenu, handleProfileMenuOpen, widgetRef, RESIZE_HANDLE_SIZE } = chat;
+  const rect = chat?.rect;
+  const rectX = rect?.x;
+  const rectY = rect?.y;
+  const rectWidth = rect?.width;
+  const rectHeight = rect?.height;
+
+  React.useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      !Number.isFinite(rectX) ||
+      !Number.isFinite(rectY) ||
+      !Number.isFinite(rectWidth) ||
+      !Number.isFinite(rectHeight)
+    ) {
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent("onbure-chat-widget-rect", {
+        detail: {
+          x: rectX,
+          y: rectY,
+          width: rectWidth,
+          height: rectHeight,
+        },
+      })
+    );
+  }, [rectX, rectY, rectWidth, rectHeight]);
+
+  if (!chat || !rect) return null;
+  const { isDragging, isCompact, handleResizeStart, handleDragStart, saveRect, profileMenu, handleProfileMenuOpen, widgetRef, RESIZE_HANDLE_SIZE } = chat;
 
   return (
     <>
@@ -56,11 +86,11 @@ export default function ChatWidget({ isOpen, onClose, openDmRequest }: { isOpen:
           className="flex items-center gap-3 px-4 flex-shrink-0 select-none"
           style={{ height: 46, background: "var(--primary)", color: "var(--primary-foreground)" }}
         >
-          <div className="text-sm font-semibold">Chat</div>
+          <div className="text-sm font-semibold">{t("chat.widgetTitle")}</div>
           <div
             className="flex-1 h-full cursor-grab active:cursor-grabbing"
             onMouseDown={handleDragStart}
-            aria-label="Drag chat window"
+            aria-label={t("chat.dragWindowAria")}
           />
           <button
             onClick={() => {
@@ -68,7 +98,7 @@ export default function ChatWidget({ isOpen, onClose, openDmRequest }: { isOpen:
               onClose();
             }}
             className="text-[var(--primary-foreground)] hover:opacity-90"
-            aria-label="Close chat"
+            aria-label={t("chat.closeAria")}
           >
             <X className="w-4 h-4" />
           </button>
@@ -108,7 +138,7 @@ export default function ChatWidget({ isOpen, onClose, openDmRequest }: { isOpen:
             className="w-full text-left px-3 py-1.5 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
             onClick={handleProfileMenuOpen}
           >
-            {profileMenu.targetType === "team" ? "Team Profile" : "View Profile"}
+            {profileMenu.targetType === "team" ? t("chat.teamProfile") : t("chat.viewProfile")}
           </button>
         </div>
       )}

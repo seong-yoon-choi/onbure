@@ -1,11 +1,41 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getRegionLegalDocument } from "@/lib/legal-documents";
+import { buildPageMetadata } from "@/lib/seo";
 
 export const runtime = "nodejs";
+
+const LEGAL_REGION_SEGMENTS = ["kr", "cn", "jp", "us", "eu"] as const;
 
 type LegalRegionPageProps = {
     params: Promise<{ region: string }>;
 };
+
+export function generateStaticParams() {
+    return LEGAL_REGION_SEGMENTS.map((region) => ({ region }));
+}
+
+export async function generateMetadata({ params }: LegalRegionPageProps): Promise<Metadata> {
+    const { region } = await params;
+    const doc = getRegionLegalDocument(region);
+
+    if (!doc) {
+        return {
+            robots: {
+                index: false,
+                follow: false,
+            },
+        };
+    }
+
+    return buildPageMetadata({
+        title: doc.title,
+        description: `${doc.title}. Locale: ${doc.locale}. Effective date: ${doc.effectiveDate}.`,
+        pathname: `/legal/${doc.region.toLowerCase()}`,
+        keywords: ["legal", "terms", "privacy", "cookie policy"],
+        openGraphType: "article",
+    });
+}
 
 export default async function LegalRegionPage({ params }: LegalRegionPageProps) {
     const { region } = await params;

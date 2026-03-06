@@ -3,20 +3,22 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { Compass, Bell, MessageSquare, LogOut, ChevronDown, User as UserIcon, Search, Plus, Users } from "lucide-react";
+import { Compass, Bell, MessageSquare, LogOut, ChevronDown, User as UserIcon, Search, Plus, Users, CircleHelp } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ChatWidget from "@/components/chat/ChatWidget";
 import CreateTeamModal from "@/components/teams/CreateTeamModal";
 import RequestsModal from "@/components/requests/RequestsModal";
 import { useAuditRealtime } from "@/lib/realtime/use-audit-realtime";
 import { trackUxClick } from "@/lib/ux/client";
+import { useLanguage } from "@/components/providers";
+import QnaFeedbackWidget from "@/components/qna-feedback/QnaFeedbackWidget";
 
 const leftNavItems = [
-    { href: "/discovery", label: "Discovery", icon: Compass, actionKey: "nav.discovery" },
-    { href: "/friends", label: "Friends", icon: Users, actionKey: "nav.friends" },
+    { href: "/discovery", labelKey: "nav.discovery", icon: Compass, actionKey: "nav.discovery" },
+    { href: "/friends", labelKey: "nav.friends", icon: Users, actionKey: "nav.friends" },
 ];
 
 interface OpenChatDmRequest {
@@ -102,13 +104,17 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     const pathname = usePathname();
     const router = useRouter();
     const { data: session, status: sessionStatus } = useSession();
+    const { t } = useLanguage();
     const currentUserId = (session?.user as { id?: string } | undefined)?.id || "";
     const [teamOpen, setTeamOpen] = useState(false);
     const [isChatOpen, setIsChatOpen] = useState(false);
+    const [isQnaFeedbackOpen, setIsQnaFeedbackOpen] = useState(false);
     const [isRequestsOpen, setIsRequestsOpen] = useState(false);
     const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false);
     const [openChatDmRequest, setOpenChatDmRequest] = useState<OpenChatDmRequest | null>(null);
     const [searchTerm, setSearchTerm] = useState("");
+
+    const isAdminUser = (session?.user as any)?.isAdmin === true;
     const [myTeams, setMyTeams] = useState<Array<{ teamId: string; teamName: string; role: "Owner" | "Admin" | "Member"; status: "Active" | "Inactive" }>>([]);
     const [teamsLoading, setTeamsLoading] = useState(false);
     const [hasRequestsAlert, setHasRequestsAlert] = useState(false);
@@ -119,6 +125,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     const chatAlertInFlightRef = useRef(false);
     const chatAlertResetAtRef = useRef(0);
     const isWorkspacePage = pathname.startsWith("/workspace");
+    const workspaceTeamId = useMemo(() => {
+        const match = pathname.match(/^\/workspace\/([^/?#]+)/);
+        return match?.[1] ? decodeURIComponent(match[1]) : "";
+    }, [pathname]);
     const chatAlertResetStorageKey = currentUserId
         ? `onbure.chatTopbar.resetAt.${currentUserId}`
         : "";
@@ -430,21 +440,26 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                                     href={item.href}
                                     onClick={() => trackNavAction(item.actionKey)}
                                     className={cn(
-                                        "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-default",
+                                        "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
                                         isActive
                                             ? "bg-[var(--card-bg)] text-[var(--fg)] border border-[var(--border)]"
                                             : "text-[var(--muted)] hover:text-[var(--fg)]"
                                     )}
                                 >
                                     <Icon className="w-4 h-4" />
-                                    {item.label}
+                                    {t(item.labelKey)}
                                 </Link>
                             );
                         })}
 
                         <div className="relative" ref={teamMenuRef}>
                             <button
-                                onClick={() => {
+                                onClick={(e) => {
+                                    if (sessionStatus === "unauthenticated") {
+                                        e.preventDefault();
+                                        router.push("/login");
+                                        return;
+                                    }
                                     trackNavAction("nav.my_team");
                                     setTeamOpen(!teamOpen);
                                 }}
@@ -455,16 +470,16 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                                         : "text-[var(--muted)] hover:text-[var(--fg)]"
                                 )}
                             >
-                                My Teams <ChevronDown className="w-4 h-4" />
+                                {t("nav.myTeams")} <ChevronDown className="w-4 h-4" />
                             </button>
                             {teamOpen && (
                                 <div className="absolute top-full left-0 mt-2 w-64 bg-[var(--card-bg)] border border-[var(--border)] rounded-lg shadow-xl p-2 z-50">
-                                    <p className="text-xs text-[var(--muted)] px-2 py-1">Select Team</p>
+                                    <p className="text-xs text-[var(--muted)] px-2 py-1">{t("nav.selectTeam")}</p>
                                     <div className="max-h-52 overflow-auto py-1 space-y-1">
                                         {teamsLoading ? (
-                                            <p className="px-2 py-1.5 text-xs text-[var(--muted)]">Loading...</p>
+                                            <p className="px-2 py-1.5 text-xs text-[var(--muted)]">{t("common.loading")}</p>
                                         ) : myTeams.length === 0 ? (
-                                            <p className="px-2 py-1.5 text-xs text-[var(--muted)]">No teams yet.</p>
+                                            <p className="px-2 py-1.5 text-xs text-[var(--muted)]">{t("nav.noTeamsYet")}</p>
                                         ) : (
                                             myTeams.map((team) => (
                                                 <Link
@@ -474,14 +489,25 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                                                     className="block px-2 py-1.5 rounded hover:bg-[var(--card-bg-hover)]"
                                                 >
                                                     <p className="text-sm text-[var(--fg)] truncate">{team.teamName}</p>
-                                                    <p className="text-[10px] text-[var(--muted)] mt-0.5">{team.role}</p>
+                                                    <p className="text-[10px] text-[var(--muted)] mt-0.5">
+                                                        {team.role === "Owner"
+                                                            ? t("team.role.owner")
+                                                            : team.role === "Admin"
+                                                                ? t("team.role.admin")
+                                                                : t("team.role.member")}
+                                                    </p>
                                                 </Link>
                                             ))
                                         )}
                                     </div>
                                     <button
                                         type="button"
-                                        onClick={() => {
+                                        onClick={(e) => {
+                                            if (sessionStatus === "unauthenticated") {
+                                                e.preventDefault();
+                                                router.push("/login");
+                                                return;
+                                            }
                                             trackUxClick("myteam.dropdown_create_team", { source: "topbar_dropdown" });
                                             setTeamOpen(false);
                                             setIsCreateTeamOpen(true);
@@ -489,7 +515,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                                         className="mt-1 w-full flex items-center gap-2 px-2 py-1.5 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)] rounded"
                                     >
                                         <Plus className="h-3.5 w-3.5" />
-                                        create team
+                                        {t("nav.createTeam")}
                                     </button>
                                 </div>
                             )}
@@ -503,7 +529,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                     <form onSubmit={handleSearch} className="relative">
                         <Search className="absolute left-3 top-2.5 h-4 w-4 text-[var(--muted)]" />
                         <Input
-                            placeholder="Search teams & people..."
+                            placeholder={t("nav.searchPlaceholder")}
                             className="pl-9 pr-20 h-9 text-sm transition-colors w-full"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
@@ -514,7 +540,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                             variant="ghost"
                             className="absolute right-1 top-1 h-7 px-2 text-xs text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                         >
-                            Search
+                            {t("common.search")}
                         </Button>
                     </form>
                 </div>
@@ -526,14 +552,19 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                         variant="ghost"
                         size="sm"
                         className={cn("relative text-[var(--muted)] hover:text-[var(--fg)]", isRequestsOpen && "text-[var(--primary)] bg-[var(--primary)]/10")}
-                        onClick={() => {
+                        onClick={(e) => {
+                            if (sessionStatus === "unauthenticated") {
+                                e.preventDefault();
+                                router.push("/login");
+                                return;
+                            }
                             trackNavAction("nav.notice");
                             setIsRequestsOpen((prev) => !prev);
                             setHasRequestsAlert(false);
                         }}
                     >
                         <Bell className="w-4 h-4 mr-2" />
-                        Notices
+                        {t("nav.notices")}
                         {hasRequestsAlert && !isRequestsOpen && (
                             <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-rose-500 ring-1 ring-[var(--header-bg)]" />
                         )}
@@ -544,43 +575,89 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                         variant="ghost"
                         size="sm"
                         className={cn("relative text-[var(--muted)] hover:text-[var(--fg)]", isChatOpen && "text-[var(--primary)] bg-[var(--primary)]/10")}
-                        onClick={() => {
+                        onClick={(e) => {
+                            if (sessionStatus === "unauthenticated") {
+                                e.preventDefault();
+                                router.push("/login");
+                                return;
+                            }
                             trackNavAction("nav.chat");
                             markChatAlertsChecked();
                             setIsChatOpen((prev) => !prev);
                         }}
                     >
                         <MessageSquare className="w-4 h-4 mr-2" />
-                        Chat
+                        {t("nav.chat")}
                         {hasChatAlert && (
                             <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-rose-500 ring-1 ring-[var(--header-bg)]" />
                         )}
                     </Button>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className={cn(
+                            "relative text-[var(--muted)] hover:text-[var(--fg)]",
+                            isQnaFeedbackOpen && "text-[var(--primary)] bg-[var(--primary)]/10"
+                        )}
+                        onClick={() => {
+                            trackNavAction("nav.qna_feedback");
+                            setIsQnaFeedbackOpen((prev) => !prev);
+                        }}
+                    >
+                        <CircleHelp className="w-4 h-4 mr-2" />
+                        {t("workspace.qnaFeedback")}
+                    </Button>
+
+                    {isAdminUser && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className={cn(
+                                "relative text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300",
+                                pathname.startsWith("/admin") && "bg-emerald-500/10"
+                            )}
+                            onClick={() => {
+                                trackNavAction("nav.admin_dashboard");
+                                router.push("/admin/qna");
+                            }}
+                        >
+                            {t("nav.adminDashboard")}
+                        </Button>
+                    )}
 
                     <div className="h-6 w-px bg-[var(--border)] mx-2" />
 
                     {/* Profile & Logout */}
-                    <div className="flex items-center gap-3">
-                        <Link
-                            href="/profile"
-                            onClick={() => trackNavAction("nav.my_profile")}
-                            className="h-8 w-8 rounded-full bg-[var(--primary)]/15 flex items-center justify-center text-[var(--primary)] text-xs font-bold hover:ring-2 hover:ring-[var(--ring)]/40 transition-all"
-                        >
-                            {session?.user?.name?.[0] || <UserIcon className="w-4 h-4" />}
-                        </Link>
+                    {sessionStatus === "authenticated" ? (
+                        <div className="flex items-center gap-3">
+                            <Link
+                                href="/profile"
+                                onClick={() => trackNavAction("nav.my_profile")}
+                                className="h-8 w-8 rounded-full bg-[var(--primary)]/15 flex items-center justify-center text-[var(--primary)] text-xs font-bold hover:ring-2 hover:ring-[var(--ring)]/40 transition-all"
+                            >
+                                {session?.user?.name?.[0] || <UserIcon className="w-4 h-4" />}
+                            </Link>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-[var(--muted)] hover:text-red-500 w-8 h-8"
+                                aria-label={t("nav.logout")}
+                                onClick={() => {
+                                    trackNavAction("nav.logout");
+                                    void signOut({ callbackUrl: "/login" });
+                                }}
+                            >
+                                <LogOut className="w-4 h-4" />
+                            </Button>
+                        </div>
+                    ) : (
                         <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-[var(--muted)] hover:text-red-500 w-8 h-8"
-                            aria-label="Log out"
-                            onClick={() => {
-                                trackNavAction("nav.logout");
-                                void signOut({ callbackUrl: "/login" });
-                            }}
+                            size="sm"
+                            onClick={() => router.push("/login")}
                         >
-                            <LogOut className="w-4 h-4" />
+                            {t("nav.signIn")}
                         </Button>
-                    </div>
+                    )}
                 </div>
             </header>
 
@@ -612,6 +689,12 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                     setIsChatOpen(false);
                 }}
                 openDmRequest={openChatDmRequest}
+            />
+            <QnaFeedbackWidget
+                isOpen={isQnaFeedbackOpen}
+                onClose={() => setIsQnaFeedbackOpen(false)}
+                teamId={workspaceTeamId}
+                authorName={String(session?.user?.name || session?.user?.email || currentUserId || "")}
             />
             <CreateTeamModal
                 open={isCreateTeamOpen}

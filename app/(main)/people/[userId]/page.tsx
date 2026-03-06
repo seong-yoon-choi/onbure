@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, Globe, Languages, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AlertModal } from "@/components/ui/modal";
 import { trackUxClick } from "@/lib/ux/client";
+import { useLanguage } from "@/components/providers";
 
 type ChatState = "NONE" | "PENDING" | "ACCEPTED";
 type FriendState = "NONE" | "PENDING" | "ACCEPTED";
@@ -52,7 +54,10 @@ const INITIAL_COMPOSER: ComposerState = {
 };
 
 export default function PeopleProfilePage() {
+    const { t } = useLanguage();
     const params = useParams<{ userId: string }>();
+    const router = useRouter();
+    const { status: sessionStatus } = useSession();
     const userId = Array.isArray(params?.userId) ? params.userId[0] : params?.userId;
 
     const [loading, setLoading] = useState(true);
@@ -94,7 +99,7 @@ export default function PeopleProfilePage() {
     const getMyTeams = async () => {
         if (myTeams) return myTeams;
         const res = await fetch("/api/chat/teams");
-        if (!res.ok) throw new Error("Failed to load your teams.");
+        if (!res.ok) throw new Error(t("people.loadTeamsFailedTitle"));
         const data = (await res.json()) as Array<{ teamId: string; name: string }>;
         setMyTeams(data);
         return data;
@@ -102,7 +107,7 @@ export default function PeopleProfilePage() {
 
     const loadProfile = useCallback(async (silent = false) => {
         if (!userId) {
-            setError("Invalid profile URL.");
+            setError(t("people.invalidProfileUrl"));
             setLoading(false);
             return;
         }
@@ -114,7 +119,7 @@ export default function PeopleProfilePage() {
             const res = await fetch(`/api/users/${encodeURIComponent(userId)}`);
             if (!res.ok) {
                 const payload = await res.json().catch(() => ({}));
-                throw new Error(payload.error || "Failed to load profile.");
+                throw new Error(payload.error || t("people.loadFailed"));
             }
             const data = (await res.json()) as Partial<PublicUserProfile>;
             setProfile({
@@ -137,11 +142,11 @@ export default function PeopleProfilePage() {
                 isSelf: Boolean(data.isSelf),
             });
         } catch (e: any) {
-            setError(e?.message || "Failed to load profile.");
+            setError(e?.message || t("people.loadFailed"));
         } finally {
             if (!silent) setLoading(false);
         }
-    }, [userId]);
+    }, [userId, t]);
 
     useEffect(() => {
         void loadProfile();
@@ -165,6 +170,10 @@ export default function PeopleProfilePage() {
     };
 
     const openChatComposer = () => {
+        if (sessionStatus === "unauthenticated") {
+            router.push("/login");
+            return;
+        }
         if (!profile) return;
         if (profile.friendState === "ACCEPTED" || profile.chatState === "ACCEPTED") {
             if (typeof window !== "undefined") {
@@ -177,14 +186,14 @@ export default function PeopleProfilePage() {
             return;
         }
         if (!profile.canRequestChat) {
-            openNotice("Chat unavailable", "This user is already requested.");
+            openNotice(t("people.chatUnavailableTitle"), t("people.chatUnavailableMessage"));
             return;
         }
 
         setComposer({
             isOpen: true,
             mode: "CHAT",
-            message: "Let's chat!",
+            message: t("people.chatDefaultMessage"),
             selectedTeamId: "",
             teamOptions: [],
             isSubmitting: false,
@@ -193,16 +202,23 @@ export default function PeopleProfilePage() {
     };
 
     const openFriendComposer = () => {
+        if (sessionStatus === "unauthenticated") {
+            router.push("/login");
+            return;
+        }
         if (!profile) return;
         if (!profile.canRequestFriend) {
-            const statusLabel = profile.friendState === "ACCEPTED" ? "already your friend" : "already requested";
-            openNotice("Friend unavailable", `This user is ${statusLabel}.`);
+            const statusLabel =
+                profile.friendState === "ACCEPTED"
+                    ? t("people.friendUnavailableAccepted")
+                    : t("people.friendUnavailableRequested");
+            openNotice(t("people.friendUnavailableTitle"), t("people.friendUnavailableMessage", { status: statusLabel }));
             return;
         }
         setComposer({
             isOpen: true,
             mode: "FRIEND",
-            message: "Let's be friends.",
+            message: t("people.friendDefaultMessage"),
             selectedTeamId: "",
             teamOptions: [],
             isSubmitting: false,
@@ -211,23 +227,27 @@ export default function PeopleProfilePage() {
     };
 
     const openInviteComposer = async () => {
+        if (sessionStatus === "unauthenticated") {
+            router.push("/login");
+            return;
+        }
         if (!profile) return;
         if (!profile.canInvite) {
-            openNotice("Invite unavailable", "You cannot invite yourself.");
+            openNotice(t("people.inviteUnavailableTitle"), t("people.inviteUnavailableSelf"));
             return;
         }
 
         try {
             const options = await getMyTeams();
             if (!options.length) {
-                openNotice("Invite unavailable", "You need at least one team to send an invite.");
+                openNotice(t("people.inviteUnavailableTitle"), t("people.inviteNeedsTeam"));
                 return;
             }
 
             setComposer({
                 isOpen: true,
                 mode: "INVITE",
-                message: "I'd like to invite you to my team.",
+                message: t("people.inviteDefaultMessage"),
                 selectedTeamId: options[0].teamId,
                 teamOptions: options,
                 isSubmitting: false,
@@ -235,18 +255,18 @@ export default function PeopleProfilePage() {
             });
         } catch (e) {
             console.error(e);
-            openNotice("Failed to load teams", "Please try again in a moment.");
+            openNotice(t("people.loadTeamsFailedTitle"), t("people.loadTeamsFailedMessage"));
         }
     };
 
     const submitComposer = async () => {
         if (!profile || !composer.isOpen || composer.isSubmitting) return;
 
-        const fallback = composer.mode === "CHAT" ? "Let's chat!" : "I'd like to invite you to my team.";
-        const friendFallback = composer.mode === "FRIEND" ? "Let's be friends." : fallback;
+        const fallback = composer.mode === "CHAT" ? t("people.chatDefaultMessage") : t("people.inviteDefaultMessage");
+        const friendFallback = composer.mode === "FRIEND" ? t("people.friendDefaultMessage") : fallback;
         const message = normalizeShortMessage(composer.message, friendFallback);
         if (composer.mode === "INVITE" && !composer.selectedTeamId) {
-            setComposer((prev) => ({ ...prev, error: "Please select a team." }));
+            setComposer((prev) => ({ ...prev, error: t("people.selectTeam") }));
             return;
         }
 
@@ -302,14 +322,14 @@ export default function PeopleProfilePage() {
             if (res.status === 409) {
                 if (composer.mode === "CHAT" || composer.mode === "FRIEND") {
                     await loadProfile(true);
-                    openNotice("Already requested", data.error || "An active request already exists.");
+                    openNotice(t("discovery.notice.alreadyRequestedTitle"), data.error || t("people.requestExists"));
                     setComposer((prev) => ({ ...prev, isOpen: false, isSubmitting: false, error: "" }));
                     return;
                 }
                 setComposer((prev) => ({
                     ...prev,
                     isSubmitting: false,
-                    error: data.error || "An active request already exists.",
+                    error: data.error || t("people.requestExists"),
                 }));
                 return;
             }
@@ -317,11 +337,11 @@ export default function PeopleProfilePage() {
             setComposer((prev) => ({
                 ...prev,
                 isSubmitting: false,
-                error: data.error || "Failed to send request.",
+                error: data.error || t("people.sendFailed"),
             }));
         } catch (e) {
             console.error(e);
-            setComposer((prev) => ({ ...prev, isSubmitting: false, error: "Failed to send request." }));
+            setComposer((prev) => ({ ...prev, isSubmitting: false, error: t("people.sendFailed") }));
         }
     };
 
@@ -335,7 +355,7 @@ export default function PeopleProfilePage() {
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
-                throw new Error(data.error || "Failed to unfriend.");
+                throw new Error(data.error || t("people.unfriendFailed"));
             }
 
             setProfile((prev) =>
@@ -348,14 +368,14 @@ export default function PeopleProfilePage() {
 
             setNotice({
                 open: true,
-                title: "Friend removed",
-                message: `${profile.username} has been removed from your friends list.`,
+                title: t("people.friendRemovedTitle"),
+                message: t("people.friendRemovedMessage", { username: profile.username }),
             });
         } catch (error: any) {
             setNotice({
                 open: true,
-                title: "Error",
-                message: error.message || "Failed to remove friend.",
+                title: t("common.error"),
+                message: error.message || t("people.unfriendFailed"),
             });
         } finally {
             setUnfriendContext({ isOpen: false, isSubmitting: false });
@@ -363,7 +383,7 @@ export default function PeopleProfilePage() {
     };
 
     if (loading) {
-        return <div className="text-[var(--muted)]">Loading profile...</div>;
+        return <div className="text-[var(--muted)]">{t("people.loadingProfile")}</div>;
     }
 
     if (error || !profile) {
@@ -371,9 +391,9 @@ export default function PeopleProfilePage() {
             <div className="space-y-4">
                 <Link href="/discovery" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
                     <ArrowLeft className="w-4 h-4" />
-                    Back to Discovery
+                    {t("people.backToDiscovery")}
                 </Link>
-                <div className="text-red-500 text-sm">{error || "Profile not found."}</div>
+                <div className="text-red-500 text-sm">{error || t("people.profileNotFound")}</div>
             </div>
         );
     }
@@ -383,7 +403,7 @@ export default function PeopleProfilePage() {
             <div className="max-w-3xl mx-auto space-y-6">
                 <Link href="/discovery" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
                     <ArrowLeft className="w-4 h-4" />
-                    Back to Discovery
+                    {t("people.backToDiscovery")}
                 </Link>
 
                 <div className="rounded-xl border border-[var(--border)] bg-[var(--card-bg)] p-6 space-y-5">
@@ -413,7 +433,7 @@ export default function PeopleProfilePage() {
                                             openFriendComposer();
                                         }}
                                     >
-                                        Friend
+                                        {t("people.friend")}
                                     </Button>
                                 ) : profile.friendState === "ACCEPTED" ? (
                                     <Button
@@ -427,11 +447,11 @@ export default function PeopleProfilePage() {
                                             setUnfriendContext({ isOpen: true, isSubmitting: false });
                                         }}
                                     >
-                                        Unfriend
+                                        {t("people.unfriend")}
                                     </Button>
                                 ) : (
                                     <span className="h-8 px-3 inline-flex items-center rounded border border-[var(--border)] text-[10px] font-medium text-[var(--muted)]">
-                                        Friend Requested
+                                        {t("people.friendRequested")}
                                     </span>
                                 )}
                                 {profile.canRequestChat || profile.friendState === "ACCEPTED" || profile.chatState === "ACCEPTED" ? (
@@ -446,11 +466,11 @@ export default function PeopleProfilePage() {
                                             openChatComposer();
                                         }}
                                     >
-                                        Chat
+                                        {t("people.chat")}
                                     </Button>
                                 ) : (
                                     <span className="h-8 px-3 inline-flex items-center rounded border border-[var(--border)] text-[10px] font-medium text-[var(--muted)]">
-                                        Requested
+                                        {t("people.requested")}
                                     </span>
                                 )}
                                 {profile.canInvite && (
@@ -465,7 +485,7 @@ export default function PeopleProfilePage() {
                                             void openInviteComposer();
                                         }}
                                     >
-                                        Invite
+                                        {t("people.invite")}
                                     </Button>
                                 )}
                             </div>
@@ -484,14 +504,14 @@ export default function PeopleProfilePage() {
                     </div>
 
                     <div className="space-y-2">
-                        <h2 className="text-sm font-semibold text-[var(--fg)]">Bio</h2>
+                        <h2 className="text-sm font-semibold text-[var(--fg)]">{t("people.bio")}</h2>
                         <p className="text-sm text-[var(--muted)] whitespace-pre-wrap">
-                            {profile.bio || "No bio yet."}
+                            {profile.bio || t("discovery.noBioYet")}
                         </p>
                     </div>
 
                     <div className="space-y-2">
-                        <h2 className="text-sm font-semibold text-[var(--fg)]">Skills</h2>
+                        <h2 className="text-sm font-semibold text-[var(--fg)]">{t("people.skills")}</h2>
                         <div className="flex flex-wrap gap-2">
                             {profile.skills.length > 0 ? (
                                 profile.skills.map((skill) => (
@@ -500,13 +520,13 @@ export default function PeopleProfilePage() {
                                     </span>
                                 ))
                             ) : (
-                                <span className="text-sm text-[var(--muted)]">No skills yet.</span>
+                                <span className="text-sm text-[var(--muted)]">{t("discovery.noSkillsYet")}</span>
                             )}
                         </div>
                     </div>
 
                     <div className="text-sm text-[var(--muted)]">
-                        {profile.availabilityHours || "-"} / week
+                        {profile.availabilityHours || "-"} / {t("people.perWeek")}
                     </div>
                 </div>
             </div>
@@ -524,20 +544,20 @@ export default function PeopleProfilePage() {
                         <div className="px-5 py-4 border-b border-[var(--border)]">
                             <h3 className="text-base font-semibold text-[var(--fg)]">
                                 {composer.mode === "CHAT"
-                                    ? "Send Chat Request"
+                                    ? t("people.sendChatRequest")
                                     : composer.mode === "FRIEND"
-                                        ? "Send Friend Request"
-                                        : "Send Team Invite"}
+                                        ? t("people.sendFriendRequest")
+                                        : t("people.sendTeamInvite")}
                             </h3>
                             <p className="text-xs text-[var(--muted)] mt-1 truncate">
-                                To: {profile.username}
+                                {t("people.toPrefix", { name: profile.username })}
                             </p>
                         </div>
 
                         <div className="px-5 py-4 space-y-3">
                             {composer.mode === "INVITE" && (
                                 <div className="space-y-1">
-                                    <label className="text-xs text-[var(--muted)]">Team</label>
+                                    <label className="text-xs text-[var(--muted)]">{t("people.teamLabel")}</label>
                                     <select
                                         value={composer.selectedTeamId}
                                         onChange={(event) =>
@@ -555,7 +575,7 @@ export default function PeopleProfilePage() {
                             )}
 
                             <div className="space-y-1">
-                                <label className="text-xs text-[var(--muted)]">Message</label>
+                                <label className="text-xs text-[var(--muted)]">{t("people.messageLabel")}</label>
                                 <textarea
                                     value={composer.message}
                                     onChange={(event) =>
@@ -565,10 +585,10 @@ export default function PeopleProfilePage() {
                                     className="w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
                                     placeholder={
                                         composer.mode === "CHAT"
-                                            ? "Write a short chat request..."
+                                            ? t("people.chatPlaceholder")
                                             : composer.mode === "FRIEND"
-                                                ? "Write a short friend request..."
-                                                : "Write a short invite message..."
+                                                ? t("people.friendPlaceholder")
+                                                : t("people.invitePlaceholder")
                                     }
                                 />
                                 <div className="text-[10px] text-[var(--muted)] text-right">
@@ -589,7 +609,7 @@ export default function PeopleProfilePage() {
                                 onClick={closeComposer}
                                 disabled={composer.isSubmitting}
                             >
-                                Cancel
+                                {t("people.cancel")}
                             </Button>
                             <Button
                                 type="button"
@@ -597,7 +617,7 @@ export default function PeopleProfilePage() {
                                 onClick={() => void submitComposer()}
                                 disabled={composer.isSubmitting}
                             >
-                                {composer.isSubmitting ? "Sending..." : "Send"}
+                                {composer.isSubmitting ? t("people.sending") : t("people.send")}
                             </Button>
                         </div>
                     </div>
@@ -615,9 +635,9 @@ export default function PeopleProfilePage() {
                 >
                     <div className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] shadow-2xl overflow-hidden">
                         <div className="px-6 py-6 text-center">
-                            <h3 className="mb-2 text-lg font-semibold text-[var(--fg)]">Remove Friend?</h3>
+                            <h3 className="mb-2 text-lg font-semibold text-[var(--fg)]">{t("people.removeFriendTitle")}</h3>
                             <p className="text-sm text-[var(--muted)]">
-                                Are you sure you want to remove <strong>{profile.username}</strong> from your friends list?
+                                {t("people.removeFriendMessage", { username: profile.username })}
                             </p>
                         </div>
                         <div className="flex border-t border-[var(--border)]">
@@ -627,7 +647,7 @@ export default function PeopleProfilePage() {
                                 onClick={() => setUnfriendContext({ isOpen: false, isSubmitting: false })}
                                 disabled={unfriendContext.isSubmitting}
                             >
-                                Cancel
+                                {t("people.cancel")}
                             </button>
                             <div className="w-px bg-[var(--border)]" />
                             <button
@@ -636,7 +656,7 @@ export default function PeopleProfilePage() {
                                 onClick={() => void handleUnfriend()}
                                 disabled={unfriendContext.isSubmitting}
                             >
-                                {unfriendContext.isSubmitting ? "Removing..." : "Remove"}
+                                {unfriendContext.isSubmitting ? t("people.removing") : t("people.remove")}
                             </button>
                         </div>
                     </div>

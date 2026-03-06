@@ -2,10 +2,12 @@ import React from "react";
 import { Send, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useChat } from "./useChat";
+import { useLanguage } from "@/components/providers";
 
 type ChatState = NonNullable<ReturnType<typeof useChat>>;
 
 export function ChatInputArea({ chat }: { chat: ChatState }) {
+    const { t } = useLanguage();
     const {
         handleSend,
         messageInputRef,
@@ -23,7 +25,7 @@ export function ChatInputArea({ chat }: { chat: ChatState }) {
                     ref={messageInputRef}
                     className="flex-1 px-3 py-2 border rounded-md text-sm bg-[var(--input-bg)] text-[var(--fg)]"
                     style={{ borderColor: "var(--border)" }}
-                    placeholder={activeThread ? "Type a message..." : "Select a thread first"}
+                    placeholder={activeThread ? t("chat.typeMessagePlaceholder") : t("chat.selectThreadFirst")}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     disabled={!activeThread || sendLoading}

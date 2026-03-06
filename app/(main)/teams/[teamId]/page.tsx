@@ -7,6 +7,8 @@ import { ArrowLeft, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/components/ui/modal";
 import { trackUxClick } from "@/lib/ux/client";
+import { useLanguage } from "@/components/providers";
+import { resolveTeamApiErrorMessage } from "@/lib/i18n/team-api-errors";
 
 interface TeamMemberSummary {
     id: string;
@@ -23,6 +25,7 @@ interface TeamProfilePayload {
     teamId: string;
     name: string;
     description?: string;
+    descriptionTranslated?: string | null;
     recruitingRoles?: string[];
     stage?: string;
     timezone?: string;
@@ -46,59 +49,31 @@ interface ProfileMenuState {
 const STAGE_OPTIONS = ["idea", "mvp", "beta", "launched"] as const;
 const COMMITMENT_OPTIONS = ["1-5", "6-10", "11-20", "21-40", "40+"] as const;
 const WORK_STYLE_OPTIONS = ["async", "sync", "hybrid"] as const;
-const STAGE_LABELS: Record<(typeof STAGE_OPTIONS)[number], string> = {
-    idea: "Idea",
-    mvp: "MVP",
-    beta: "Beta",
-    launched: "Launched",
-};
-const WORK_STYLE_LABELS: Record<(typeof WORK_STYLE_OPTIONS)[number], string> = {
-    async: "Async",
-    sync: "Sync",
-    hybrid: "Hybrid",
-};
-const WORK_STYLE_HELP_ITEMS = [
-    {
-        label: "Async",
-        description: "Progress does not require everyone online at the same time.",
-        example: "Leave decisions in docs/Notion and teammates respond later.",
-    },
-    {
-        label: "Sync",
-        description: "Work happens together in scheduled real-time sessions.",
-        example: "Run 2-3 meetings/calls per week for immediate decisions.",
-    },
-    {
-        label: "Hybrid",
-        description: "Default to async and use sync only for key decisions.",
-        example: "One weekly meeting, everything else in docs/chat.",
-    },
-] as const;
-const LANGUAGE_OPTIONS = [
-    { value: "ko", label: "Korean" },
-    { value: "en", label: "English" },
-    { value: "ja", label: "Japanese" },
-] as const;
+const LANGUAGE_OPTIONS = ["ko", "ja", "en", "fr", "es"] as const;
 const VISIBILITY_OPTIONS = ["Public", "Private"] as const;
 const COMMON_TIMEZONES = ["UTC", "Asia/Seoul", "America/New_York", "America/Los_Angeles", "Europe/London", "Asia/Tokyo"];
-const LEAVE_CONFIRM_MESSAGE = "You have unsaved team profile changes. Leave without saving?";
 
-function formatStage(value: string | undefined | null) {
+function formatStage(
+    value: string | undefined | null,
+    labels: Record<(typeof STAGE_OPTIONS)[number], string>
+) {
     if (!value) return "-";
     const key = value.toLowerCase() as (typeof STAGE_OPTIONS)[number];
-    return STAGE_LABELS[key] || value;
+    return labels[key] || value;
 }
 
-function formatWorkStyle(value: string | undefined | null) {
+function formatWorkStyle(
+    value: string | undefined | null,
+    labels: Record<(typeof WORK_STYLE_OPTIONS)[number], string>
+) {
     if (!value) return "-";
     const key = value.toLowerCase() as (typeof WORK_STYLE_OPTIONS)[number];
-    return WORK_STYLE_LABELS[key] || value;
+    return labels[key] || value;
 }
 
-function formatLanguage(value: string | undefined | null) {
+function formatLanguage(value: string | undefined | null, labels: Record<string, string>) {
     if (!value) return "-";
-    const match = LANGUAGE_OPTIONS.find((option) => option.value === value.toLowerCase());
-    return match?.label || value;
+    return labels[value.toLowerCase()] || value;
 }
 
 function toDisplay(value: string | number | undefined | null) {
@@ -157,6 +132,7 @@ function normalizeFormForCompare(form: {
 export default function TeamDetailPage() {
     const params = useParams<{ teamId: string }>();
     const router = useRouter();
+    const { t } = useLanguage();
     const teamIdParam = Array.isArray(params?.teamId) ? params.teamId[0] : params?.teamId;
     const teamId = teamIdParam ? decodeURIComponent(teamIdParam) : "";
 
@@ -202,10 +178,58 @@ export default function TeamDetailPage() {
         });
     };
 
+    const stageLabels = useMemo<Record<(typeof STAGE_OPTIONS)[number], string>>(
+        () => ({
+            idea: t("team.stage.idea"),
+            mvp: t("team.stage.mvp"),
+            beta: t("team.stage.beta"),
+            launched: t("team.stage.launched"),
+        }),
+        [t]
+    );
+    const workStyleLabels = useMemo<Record<(typeof WORK_STYLE_OPTIONS)[number], string>>(
+        () => ({
+            async: t("team.workStyle.async"),
+            sync: t("team.workStyle.sync"),
+            hybrid: t("team.workStyle.hybrid"),
+        }),
+        [t]
+    );
+    const languageLabels = useMemo<Record<string, string>>(
+        () => ({
+            ko: t("language.korean"),
+            ja: t("language.japanese"),
+            en: t("language.english"),
+            fr: t("language.french"),
+            es: t("language.spanish"),
+        }),
+        [t]
+    );
+    const workStyleHelpItems = useMemo(
+        () => [
+            {
+                label: t("team.workStyle.async"),
+                description: t("team.workStyle.async.description"),
+                example: t("team.workStyle.async.example"),
+            },
+            {
+                label: t("team.workStyle.sync"),
+                description: t("team.workStyle.sync.description"),
+                example: t("team.workStyle.sync.example"),
+            },
+            {
+                label: t("team.workStyle.hybrid"),
+                description: t("team.workStyle.hybrid.description"),
+                example: t("team.workStyle.hybrid.example"),
+            },
+        ],
+        [t]
+    );
+
     useEffect(() => {
         async function load() {
             if (!teamId) {
-                setError("Invalid team id.");
+                setError(t("team.error.invalidTeamId"));
                 setLoading(false);
                 return;
             }
@@ -216,7 +240,7 @@ export default function TeamDetailPage() {
                 const res = await fetch(`/api/teams/${encodeURIComponent(teamId)}`);
                 const payload = await res.json().catch(() => ({}));
                 if (!res.ok) {
-                    throw new Error(payload.error || "Failed to load team profile.");
+                    throw new Error(resolveTeamApiErrorMessage(payload?.error, t, "team.error.loadFailed"));
                 }
                 const loadedTeam = payload as TeamProfilePayload;
                 setTeam(loadedTeam);
@@ -236,22 +260,23 @@ export default function TeamDetailPage() {
                     roleInput: "",
                 });
             } catch (e: any) {
-                setError(e?.message || "Failed to load team profile.");
+                setError(e?.message || t("team.error.loadFailed"));
             } finally {
                 setLoading(false);
             }
         }
 
         void load();
-    }, [teamId]);
+    }, [teamId, t]);
 
     const visibilityLabel = useMemo(
-        () => (team?.visibility === "Public" ? "public" : "private"),
-        [team?.visibility]
+        () => (team?.visibility === "Public" ? t("visibility.public") : t("visibility.private")),
+        [team?.visibility, t]
     );
     const canEdit = Boolean(team?.isOwner);
     const canLeaveTeam = Boolean(team?.isMember) && !Boolean(team?.isOwner);
     const canAddRole = form.roleInput.trim().length > 0;
+    const descriptionForView = team?.descriptionTranslated || team?.description || "-";
     const isDirty = useMemo(() => {
         if (!team) return false;
         const baseline = normalizeTeamForCompare(team);
@@ -404,7 +429,7 @@ export default function TeamDetailPage() {
             });
             const payload = await res.json().catch(() => ({}));
             if (!res.ok) {
-                throw new Error(payload.error || "Failed to update team profile.");
+                throw new Error(resolveTeamApiErrorMessage(payload?.error, t, "team.error.updateFailed"));
             }
 
             const updated = payload.team as TeamProfilePayload;
@@ -433,7 +458,7 @@ export default function TeamDetailPage() {
             }));
             setIsEditing(false);
         } catch (e: any) {
-            setSaveError(e?.message || "Failed to update team profile.");
+            setSaveError(e?.message || t("team.error.updateFailed"));
         } finally {
             setIsSaving(false);
         }
@@ -512,7 +537,7 @@ export default function TeamDetailPage() {
     const confirmLeaveTeam = async () => {
         if (!team || !canLeaveTeam || isLeavingTeam) return;
         if (!leaveTeamPassword) {
-            setLeaveTeamError("Password is required.");
+            setLeaveTeamError(t("team.error.passwordRequired"));
             return;
         }
         setIsLeavingTeam(true);
@@ -526,7 +551,7 @@ export default function TeamDetailPage() {
             });
             const payload = await res.json().catch(() => ({}));
             if (!res.ok) {
-                throw new Error(payload.error || "Failed to leave team.");
+                throw new Error(resolveTeamApiErrorMessage(payload?.error, t, "team.error.leaveFailed"));
             }
 
             if (typeof window !== "undefined") {
@@ -536,7 +561,7 @@ export default function TeamDetailPage() {
             setLeaveTeamPassword("");
             router.push("/discovery");
         } catch (e: any) {
-            setLeaveTeamError(e?.message || "Failed to leave team.");
+            setLeaveTeamError(e?.message || t("team.error.leaveFailed"));
         } finally {
             setIsLeavingTeam(false);
         }
@@ -545,7 +570,7 @@ export default function TeamDetailPage() {
     const confirmDeleteTeam = async () => {
         if (!team || !canEdit || isDeleting) return;
         if (!deletePassword) {
-            setDeleteError("Password is required.");
+            setDeleteError(t("team.error.passwordRequired"));
             return;
         }
         setIsDeleting(true);
@@ -559,7 +584,7 @@ export default function TeamDetailPage() {
             });
             const payload = await res.json().catch(() => ({}));
             if (!res.ok) {
-                throw new Error(payload.error || "Failed to delete team.");
+                throw new Error(resolveTeamApiErrorMessage(payload?.error, t, "team.error.deleteFailed"));
             }
 
             if (typeof window !== "undefined") {
@@ -569,14 +594,14 @@ export default function TeamDetailPage() {
             setDeletePassword("");
             router.push("/discovery");
         } catch (e: any) {
-            setDeleteError(e?.message || "Failed to delete team.");
+            setDeleteError(e?.message || t("team.error.deleteFailed"));
         } finally {
             setIsDeleting(false);
         }
     };
 
     if (loading) {
-        return <div className="text-[var(--muted)]">Loading team profile...</div>;
+        return <div className="text-[var(--muted)]">{t("team.loadingProfile")}</div>;
     }
 
     if (error || !team) {
@@ -584,9 +609,9 @@ export default function TeamDetailPage() {
             <div className="space-y-4">
                 <Link href="/discovery" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
                     <ArrowLeft className="w-4 h-4" />
-                    Back to Discovery
+                    {t("team.backToDiscovery")}
                 </Link>
-                <div className="text-rose-500 text-sm">{error || "Team not found."}</div>
+                <div className="text-rose-500 text-sm">{error || t("team.notFound")}</div>
             </div>
         );
     }
@@ -596,7 +621,7 @@ export default function TeamDetailPage() {
         <div className="max-w-4xl mx-auto space-y-6">
             <Link href="/discovery" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
                 <ArrowLeft className="w-4 h-4" />
-                Back to Discovery
+                {t("team.backToDiscovery")}
             </Link>
 
             <div className="rounded-xl border border-[var(--border)] bg-[var(--card-bg)] p-6 space-y-5">
@@ -607,10 +632,16 @@ export default function TeamDetailPage() {
                                 {isEditing ? form.name || "-" : team.name}
                             </h1>
                             <span className="px-2 py-0.5 rounded-full bg-[var(--card-bg-hover)] border border-[var(--border)] text-[10px] uppercase tracking-wide text-[var(--muted)]">
-                                {isEditing ? form.visibility.toLowerCase() : visibilityLabel}
+                                {isEditing
+                                    ? form.visibility === "Public"
+                                        ? t("visibility.public")
+                                        : t("visibility.private")
+                                    : visibilityLabel}
                             </span>
                         </div>
-                        <p className="text-sm text-[var(--muted)]">{isEditing ? form.description || "-" : team.description || "-"}</p>
+                        <p className="text-sm text-[var(--muted)]">
+                            {isEditing ? form.description || "-" : descriptionForView}
+                        </p>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -622,7 +653,7 @@ export default function TeamDetailPage() {
                                 disabled={isLeavingTeam}
                                 className="text-rose-500 border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-500 hover:border-rose-500/60"
                             >
-                                {isLeavingTeam ? "Leaving..." : "Leave Team"}
+                                {isLeavingTeam ? t("team.leavingTeam") : t("team.leaveTeam")}
                             </Button>
                         )}
                         {canEdit && !isEditing && (
@@ -635,7 +666,7 @@ export default function TeamDetailPage() {
                                     setIsEditing(true);
                                 }}
                             >
-                                Edit Profile
+                                {t("team.editProfile")}
                             </Button>
                         )}
                         {canEdit && isEditing && (
@@ -664,10 +695,10 @@ export default function TeamDetailPage() {
                                     }}
                                     disabled={isSaving}
                                 >
-                                    Cancel
+                                    {t("common.cancel")}
                                 </Button>
                                 <Button size="sm" onClick={() => void saveProfile()} disabled={isSaving}>
-                                    {isSaving ? "Saving..." : "Save"}
+                                    {isSaving ? t("team.saving") : t("team.save")}
                                 </Button>
                             </>
                         )}
@@ -681,7 +712,7 @@ export default function TeamDetailPage() {
                                 }}
                                 disabled={isDeleting}
                             >
-                                {isDeleting ? "Deleting..." : "Delete Team"}
+                                {isDeleting ? t("team.deletingTeam") : t("team.deleteTeam")}
                             </Button>
                         )}
                     </div>
@@ -689,7 +720,7 @@ export default function TeamDetailPage() {
                 {isEditing && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] p-3">
                         <div className="space-y-1 sm:col-span-2">
-                            <label className="text-[10px] text-[var(--muted)] uppercase">name</label>
+                            <label className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.name")}</label>
                             <input
                                 value={form.name}
                                 onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value.slice(0, 60) }))}
@@ -697,7 +728,7 @@ export default function TeamDetailPage() {
                             />
                         </div>
                         <div className="space-y-1 sm:col-span-2">
-                            <label className="text-[10px] text-[var(--muted)] uppercase">description</label>
+                            <label className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.description")}</label>
                             <textarea
                                 value={form.description}
                                 onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value.slice(0, 300) }))}
@@ -708,19 +739,19 @@ export default function TeamDetailPage() {
                         </div>
 
                         <div className="space-y-1">
-                            <label className="text-[10px] text-[var(--muted)] uppercase">Stage</label>
+                            <label className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.stage")}</label>
                             <select
                                 value={form.stage}
                                 onChange={(event) => setForm((prev) => ({ ...prev, stage: event.target.value }))}
                                 className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--card-bg)] px-3 text-sm text-[var(--fg)]"
                             >
                                 {STAGE_OPTIONS.map((option) => (
-                                    <option key={option} value={option}>{STAGE_LABELS[option]}</option>
+                                    <option key={option} value={option}>{stageLabels[option]}</option>
                                 ))}
                             </select>
                         </div>
                         <div className="space-y-1">
-                            <label className="text-[10px] text-[var(--muted)] uppercase">Time Zone</label>
+                            <label className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.timeZone")}</label>
                             <select
                                 value={form.timezone}
                                 onChange={(event) => setForm((prev) => ({ ...prev, timezone: event.target.value }))}
@@ -732,31 +763,33 @@ export default function TeamDetailPage() {
                             </select>
                         </div>
                         <div className="space-y-1">
-                            <label className="text-[10px] text-[var(--muted)] uppercase">Team Language</label>
+                            <label className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.teamLanguage")}</label>
                             <select
                                 value={form.language}
                                 onChange={(event) => setForm((prev) => ({ ...prev, language: event.target.value }))}
                                 className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--card-bg)] px-3 text-sm text-[var(--fg)]"
                             >
                                 {LANGUAGE_OPTIONS.map((option) => (
-                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                    <option key={option} value={option}>{languageLabels[option]}</option>
                                 ))}
                             </select>
                         </div>
                         <div className="space-y-1">
-                            <label className="text-[10px] text-[var(--muted)] uppercase">Visibility</label>
+                            <label className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.visibility")}</label>
                             <select
                                 value={form.visibility}
                                 onChange={(event) => setForm((prev) => ({ ...prev, visibility: event.target.value }))}
                                 className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--card-bg)] px-3 text-sm text-[var(--fg)]"
                             >
                                 {VISIBILITY_OPTIONS.map((option) => (
-                                    <option key={option} value={option}>{option}</option>
+                                    <option key={option} value={option}>
+                                        {option === "Public" ? t("visibility.public") : t("visibility.private")}
+                                    </option>
                                 ))}
                             </select>
                         </div>
                         <div className="space-y-1">
-                            <label className="text-[10px] text-[var(--muted)] uppercase">Current Members</label>
+                            <label className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.currentMembers")}</label>
                             <input
                                 type="number"
                                 min={1}
@@ -766,7 +799,7 @@ export default function TeamDetailPage() {
                             />
                         </div>
                         <div className="space-y-1">
-                            <label className="text-[10px] text-[var(--muted)] uppercase">Max People</label>
+                            <label className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.maxPeople")}</label>
                             <input
                                 type="text"
                                 inputMode="numeric"
@@ -794,7 +827,7 @@ export default function TeamDetailPage() {
                             />
                         </div>
                         <div className="space-y-1">
-                            <label className="text-[10px] text-[var(--muted)] uppercase">Weekly Commitment</label>
+                            <label className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.weeklyCommitment")}</label>
                             <select
                                 value={form.commitmentHoursPerWeek}
                                 onChange={(event) => setForm((prev) => ({ ...prev, commitmentHoursPerWeek: event.target.value }))}
@@ -807,11 +840,11 @@ export default function TeamDetailPage() {
                         </div>
                         <div className="space-y-1">
                             <div className="flex items-center gap-1.5">
-                                <label className="text-[10px] text-[var(--muted)] uppercase">Work Style</label>
+                                <label className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.workStyle")}</label>
                             <span className="group relative inline-flex h-4 w-4 items-center justify-center">
                                 <button
                                     type="button"
-                                    aria-label="Work style guide"
+                                    aria-label={t("team.workStyleGuideAria")}
                                     onMouseEnter={(event) => {
                                         const rect = event.currentTarget.getBoundingClientRect();
                                         setWorkStyleTooltip({ x: rect.right + 8, y: rect.top + rect.height / 2 });
@@ -833,12 +866,12 @@ export default function TeamDetailPage() {
                                 className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--card-bg)] px-3 text-sm text-[var(--fg)]"
                             >
                                 {WORK_STYLE_OPTIONS.map((option) => (
-                                    <option key={option} value={option}>{WORK_STYLE_LABELS[option]}</option>
+                                    <option key={option} value={option}>{workStyleLabels[option]}</option>
                                 ))}
                             </select>
                         </div>
                         <div className="space-y-1 sm:col-span-2">
-                            <label className="text-[10px] text-[var(--muted)] uppercase">Recruiting Roles</label>
+                            <label className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.recruitingRoles")}</label>
                             <div className="flex gap-2">
                                 <input
                                     value={form.roleInput}
@@ -850,10 +883,10 @@ export default function TeamDetailPage() {
                                         }
                                     }}
                                     className="flex-1 h-9 rounded-md border border-[var(--border)] bg-[var(--card-bg)] px-3 text-sm text-[var(--fg)]"
-                                    placeholder="e.g. Frontend Engineer"
+                                    placeholder={t("team.rolePlaceholder")}
                                 />
                                 <Button type="button" size="sm" variant="outline" onClick={addRole} disabled={!canAddRole}>
-                                    Add
+                                    {t("common.add")}
                                 </Button>
                             </div>
                             {form.recruitingRoles.length > 0 && (
@@ -868,7 +901,7 @@ export default function TeamDetailPage() {
                                                 type="button"
                                                 className="text-[var(--muted)] hover:text-[var(--fg)]"
                                                 onClick={() => removeRole(role)}
-                                                aria-label={`Remove ${role}`}
+                                                aria-label={`${t("common.remove")} ${role}`}
                                             >
                                                 x
                                             </button>
@@ -883,36 +916,36 @@ export default function TeamDetailPage() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
                     <div className="rounded-lg border border-[var(--border)] px-3 py-2">
-                        <p className="text-[10px] text-[var(--muted)] uppercase">Stage</p>
-                        <p className="text-[var(--fg)] mt-1">{formatStage(team.stage)}</p>
+                        <p className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.stage")}</p>
+                        <p className="text-[var(--fg)] mt-1">{formatStage(team.stage, stageLabels)}</p>
                     </div>
                     <div className="rounded-lg border border-[var(--border)] px-3 py-2">
-                        <p className="text-[10px] text-[var(--muted)] uppercase">Time Zone</p>
+                        <p className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.timeZone")}</p>
                         <p className="text-[var(--fg)] mt-1">{toDisplay(team.timezone || "UTC")}</p>
                     </div>
                     <div className="rounded-lg border border-[var(--border)] px-3 py-2">
-                        <p className="text-[10px] text-[var(--muted)] uppercase">Team Language</p>
-                        <p className="text-[var(--fg)] mt-1">{formatLanguage(team.language)}</p>
+                        <p className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.teamLanguage")}</p>
+                        <p className="text-[var(--fg)] mt-1">{formatLanguage(team.language, languageLabels)}</p>
                     </div>
                     <div className="rounded-lg border border-[var(--border)] px-3 py-2">
-                        <p className="text-[10px] text-[var(--muted)] uppercase">Current Members</p>
+                        <p className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.currentMembers")}</p>
                         <p className="text-[var(--fg)] mt-1">{toDisplay(team.teamSize)}</p>
                     </div>
                     <div className="rounded-lg border border-[var(--border)] px-3 py-2">
-                        <p className="text-[10px] text-[var(--muted)] uppercase">Max People</p>
+                        <p className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.maxPeople")}</p>
                         <p className="text-[var(--fg)] mt-1">{toDisplay(typeof team.openSlots === "number" ? team.openSlots : 0)}</p>
                     </div>
                     <div className="rounded-lg border border-[var(--border)] px-3 py-2">
-                        <p className="text-[10px] text-[var(--muted)] uppercase">Weekly Commitment</p>
+                        <p className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.weeklyCommitment")}</p>
                         <p className="text-[var(--fg)] mt-1">{toDisplay(team.commitmentHoursPerWeek || "6-10")}</p>
                     </div>
                     <div className="rounded-lg border border-[var(--border)] px-3 py-2 sm:col-span-2 lg:col-span-3">
                         <div className="flex items-center gap-1.5">
-                            <p className="text-[10px] text-[var(--muted)] uppercase">Work Style</p>
+                            <p className="text-[10px] text-[var(--muted)] uppercase">{t("team.field.workStyle")}</p>
                             <span className="group relative inline-flex h-4 w-4 items-center justify-center">
                                 <button
                                     type="button"
-                                    aria-label="Work style guide"
+                                    aria-label={t("team.workStyleGuideAria")}
                                     onMouseEnter={(event) => {
                                         const rect = event.currentTarget.getBoundingClientRect();
                                         setWorkStyleTooltip({ x: rect.right + 8, y: rect.top + rect.height / 2 });
@@ -928,12 +961,12 @@ export default function TeamDetailPage() {
                                 </button>
                             </span>
                         </div>
-                        <p className="text-[var(--fg)] mt-1">{formatWorkStyle(team.workStyle || "hybrid")}</p>
+                        <p className="text-[var(--fg)] mt-1">{formatWorkStyle(team.workStyle || "hybrid", workStyleLabels)}</p>
                     </div>
                 </div>
 
                 <div className="space-y-2">
-                    <h2 className="text-sm font-semibold text-[var(--fg)]">Recruiting Roles</h2>
+                    <h2 className="text-sm font-semibold text-[var(--fg)]">{t("team.field.recruitingRoles")}</h2>
                     <div className="flex flex-wrap gap-2">
                         {team.recruitingRoles && team.recruitingRoles.length > 0 ? (
                             team.recruitingRoles.map((role) => (
@@ -942,7 +975,7 @@ export default function TeamDetailPage() {
                                 </span>
                             ))
                         ) : (
-                            <span className="text-sm text-[var(--muted)]">No recruiting roles.</span>
+                            <span className="text-sm text-[var(--muted)]">{t("team.noRecruitingRoles")}</span>
                         )}
                     </div>
                 </div>
@@ -951,7 +984,7 @@ export default function TeamDetailPage() {
                     <div className="space-y-2">
                         <h2 className="text-sm font-semibold text-[var(--fg)] inline-flex items-center gap-2">
                             <Users className="w-4 h-4" />
-                            Members ({team.members.length})
+                            {t("team.members")} ({team.members.length})
                         </h2>
                         <div className="rounded-lg border border-[var(--border)] bg-[var(--input-bg)] p-3 space-y-2 max-h-44 overflow-auto">
                             {team.members.length > 0 ? (
@@ -962,13 +995,31 @@ export default function TeamDetailPage() {
                                         className="flex items-center justify-between text-sm rounded-md px-2 py-1.5 hover:bg-[var(--card-bg-hover)] cursor-context-menu"
                                     >
                                         <span className="text-[var(--fg)] truncate">{member.username || member.userId}</span>
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)]">
-                                            {member.role}
-                                        </span>
+                                        <div className="flex shrink-0 items-center gap-2">
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)]">
+                                                {member.role === "Owner"
+                                                    ? t("team.role.owner")
+                                                    : member.role === "Admin"
+                                                        ? t("team.role.admin")
+                                                        : t("team.role.member")}
+                                            </span>
+                                            <Link
+                                                href={`/people/${encodeURIComponent(member.userId)}`}
+                                                onClick={() => {
+                                                    trackTeamAction("team.member_profile_button", {
+                                                        memberUserId: member.userId,
+                                                        source: "team_member_list",
+                                                    });
+                                                }}
+                                                className="inline-flex h-6 items-center rounded border border-[var(--border)] px-2 text-[10px] text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                            >
+                                                {t("team.profileMenuViewProfile")}
+                                            </Link>
+                                        </div>
                                     </div>
                                 ))
                             ) : (
-                                <p className="text-sm text-[var(--muted)]">No active members.</p>
+                                <p className="text-sm text-[var(--muted)]">{t("team.noActiveMembers")}</p>
                             )}
                         </div>
                     </div>
@@ -992,7 +1043,7 @@ export default function TeamDetailPage() {
                     className="w-full text-left px-3 py-1.5 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                     onClick={openProfileFromMenu}
                 >
-                    프로필 보기
+                    {t("team.profileMenuViewProfile")}
                 </button>
             </div>
         )}
@@ -1001,43 +1052,43 @@ export default function TeamDetailPage() {
                 className="pointer-events-none fixed z-[90] max-w-[320px] rounded border border-[var(--border)] bg-[var(--card-bg)] px-2.5 py-1.5 text-xs text-[var(--fg)] shadow-md"
                 style={{ left: workStyleTooltip.x, top: workStyleTooltip.y, transform: "translateY(-50%)" }}
             >
-                {WORK_STYLE_HELP_ITEMS.map((item) => (
+                {workStyleHelpItems.map((item) => (
                     <div key={item.label} className="mb-1 last:mb-0">
                         <span className="text-[var(--fg)]">{item.label}</span>: {item.description}
                         <br />
-                        Example: {item.example}
+                        {t("team.workStyle.examplePrefix")}: {item.example}
                     </div>
                 ))}
             </div>
         )}
         <ConfirmModal
             open={leaveModalOpen}
-            title="Unsaved Changes"
-            message={LEAVE_CONFIRM_MESSAGE}
-            confirmLabel="Leave"
-            cancelLabel="Stay"
+            title={t("team.unsavedTitle")}
+            message={t("team.unsavedMessage")}
+            confirmLabel={t("common.leave")}
+            cancelLabel={t("common.stay")}
             confirmVariant="destructive"
             onConfirm={confirmLeave}
             onCancel={cancelLeave}
         />
         <ConfirmModal
             open={deleteModalOpen}
-            title="Delete Team"
-            message="This will delete the team and related data. This action cannot be undone."
-            confirmLabel={isDeleting ? "Deleting..." : "Delete Team"}
-            cancelLabel="Cancel"
+            title={t("team.deleteModalTitle")}
+            message={t("team.deleteModalMessage")}
+            confirmLabel={isDeleting ? t("team.deletingTeam") : t("team.deleteTeam")}
+            cancelLabel={t("common.cancel")}
             confirmVariant="destructive"
             isProcessing={isDeleting}
             onConfirm={confirmDeleteTeam}
             onCancel={cancelDeleteTeam}
         >
             <div className="space-y-2">
-                <label className="text-xs text-[var(--muted)] uppercase tracking-wider">Password (Required)</label>
+                <label className="text-xs text-[var(--muted)] uppercase tracking-wider">{t("team.passwordRequiredLabel")}</label>
                 <input
                     type="password"
                     value={deletePassword}
                     onChange={(event) => setDeletePassword(event.target.value)}
-                    placeholder="Enter your current password"
+                    placeholder={t("team.passwordPlaceholder")}
                     className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--card-bg)] px-3 text-sm text-[var(--fg)]"
                 />
                 {deleteError ? <p className="text-xs text-rose-500">{deleteError}</p> : null}
@@ -1045,22 +1096,22 @@ export default function TeamDetailPage() {
         </ConfirmModal>
         <ConfirmModal
             open={leaveTeamModalOpen}
-            title="Leave Team"
-            message="정말로 팀을 떠나시겠습니까?"
-            confirmLabel={isLeavingTeam ? "Leaving..." : "Leave Team"}
-            cancelLabel="Cancel"
+            title={t("team.leaveModalTitle")}
+            message={t("team.leaveModalMessage")}
+            confirmLabel={isLeavingTeam ? t("team.leavingTeam") : t("team.leaveTeam")}
+            cancelLabel={t("common.cancel")}
             confirmVariant="destructive"
             isProcessing={isLeavingTeam}
             onConfirm={confirmLeaveTeam}
             onCancel={cancelLeaveTeam}
         >
             <div className="space-y-2">
-                <label className="text-xs text-[var(--muted)] uppercase tracking-wider">Password (Required)</label>
+                <label className="text-xs text-[var(--muted)] uppercase tracking-wider">{t("team.passwordRequiredLabel")}</label>
                 <input
                     type="password"
                     value={leaveTeamPassword}
                     onChange={(event) => setLeaveTeamPassword(event.target.value)}
-                    placeholder="Enter your current password"
+                    placeholder={t("team.passwordPlaceholder")}
                     className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--card-bg)] px-3 text-sm text-[var(--fg)]"
                 />
                 {leaveTeamError ? <p className="text-xs text-rose-500">{leaveTeamError}</p> : null}

@@ -8,12 +8,14 @@ import {
     getActiveFriendPartnerStates,
     getJoinRequestsForApplicantByStatuses,
 } from "@/lib/db/requests";
+import { translateTextsWithDeepL } from "@/lib/server/deepl";
 
 interface DiscoveryTeamRow {
     id: string;
     teamId: string;
     name: string;
     description: string;
+    descriptionTranslated?: string;
     visibility: string;
     stage?: string;
     language?: string;
@@ -62,9 +64,7 @@ const discoveryCache =
 
 export async function GET() {
     const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const userId = String((session.user as { id?: string } | undefined)?.id || "").trim();
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const userId = String((session?.user as { id?: string } | undefined)?.id || "").trim();
     const now = Date.now();
     const cached = discoveryCache.get(userId);
     if (cached && cached.expiresAt > now) {
@@ -75,10 +75,10 @@ export async function GET() {
         await Promise.allSettled([
             getPublicTeams(),
             listUsers(),
-            getActiveChatPartnerStates(userId),
-            getActiveFriendPartnerStates(userId),
-            getTeamMembershipsForUser(userId),
-            getJoinRequestsForApplicantByStatuses(userId, ["PENDING"]),
+            userId ? getActiveChatPartnerStates(userId) : Promise.resolve({} as Record<string, any>),
+            userId ? getActiveFriendPartnerStates(userId) : Promise.resolve({} as Record<string, any>),
+            userId ? getTeamMembershipsForUser(userId) : Promise.resolve([]),
+            userId ? getJoinRequestsForApplicantByStatuses(userId, ["PENDING"]) : Promise.resolve([]),
         ]);
 
     const isRejected = (result: PromiseSettledResult<unknown>) => result.status === "rejected";
@@ -135,6 +135,33 @@ export async function GET() {
         isJoinRequested: !myTeamIds.has(team.teamId) && myRequestedTeamIds.has(team.teamId),
         isOwner: team.primaryOwnerUserId === userId,
     }));
+    let localizedTeams = teamsWithJoinState;
+    if (userId) {
+        const viewerLanguage =
+            users.find((user) => String(user.userId || "").trim() === userId)?.language || "";
+        if (viewerLanguage) {
+            const descriptionsToTranslate = teamsWithJoinState
+                .map((team) => String(team.description || "").trim())
+                .filter(Boolean);
+            const translatedByOriginal = await translateTextsWithDeepL(
+                descriptionsToTranslate,
+                viewerLanguage
+            );
+            localizedTeams = teamsWithJoinState.map((team) => {
+                const originalDescription = String(team.description || "").trim();
+                const translatedDescription = originalDescription
+                    ? String(translatedByOriginal.get(originalDescription) || "").trim()
+                    : "";
+                if (!translatedDescription || translatedDescription === originalDescription) {
+                    return team;
+                }
+                return {
+                    ...team,
+                    descriptionTranslated: translatedDescription,
+                };
+            });
+        }
+    }
 
     const others: DiscoveryPersonRow[] = users
         .filter((u) => u.userId !== userId)
@@ -159,7 +186,7 @@ export async function GET() {
         });
 
     const payload: DiscoveryPayload = {
-        teams: teamsWithJoinState,
+        teams: localizedTeams,
         people: others,
         partialError: hadPartialError,
     };

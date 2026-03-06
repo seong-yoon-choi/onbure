@@ -26,6 +26,7 @@ export async function POST(req: Request) {
         const over14Agreed = Boolean(body?.over14Agreed);
         const privacyAgreed = Boolean(body?.privacyAgreed);
         const cookieAgreed = Boolean(body?.cookieAgreed);
+        const language = String(body?.language || "ko").trim();
         let username = String(body?.username || "").trim();
 
         if (!username && name) {
@@ -88,6 +89,7 @@ export async function POST(req: Request) {
             gender: gender as "male" | "female" | "other",
             age: ageRaw,
             country,
+            language,
             marketingDataConsent,
             adsReceiveConsent,
         });

@@ -432,6 +432,59 @@ create table if not exists public.workspace_comments (
 
 create index if not exists idx_workspace_comments_team on public.workspace_comments (team_id);
 
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.tables
+    where table_schema = 'public'
+      and table_name = 'workspace_qna_feedback'
+  ) and not exists (
+    select 1
+    from information_schema.tables
+    where table_schema = 'public'
+      and table_name = 'qna_feedback'
+  ) then
+    execute 'alter table public.workspace_qna_feedback rename to qna_feedback';
+  end if;
+end;
+$$;
+
+create table if not exists public.qna_feedback (
+  entry_id text primary key,
+  team_id text references public.teams(team_id) on delete cascade,
+  type text not null check (type in ('qna', 'feedback')),
+  title text not null,
+  content text not null,
+  author_user_id text not null references public.profiles(user_id) on delete cascade,
+  author_name text not null default '',
+  answer_content text,
+  answered_at timestamptz,
+  attached_file_url text,
+  attached_file_name text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table if exists public.qna_feedback
+  add column if not exists answer_content text;
+alter table if exists public.qna_feedback
+  add column if not exists answered_at timestamptz;
+alter table if exists public.qna_feedback
+  add column if not exists attached_file_url text;
+alter table if exists public.qna_feedback
+  add column if not exists attached_file_name text;
+
+
+drop trigger if exists trg_workspace_qna_feedback_updated_at on public.qna_feedback;
+drop trigger if exists trg_qna_feedback_updated_at on public.qna_feedback;
+create trigger trg_qna_feedback_updated_at
+before update on public.qna_feedback
+for each row execute function public.set_updated_at();
+
+create index if not exists idx_qna_feedback_team_created_at on public.qna_feedback (team_id, created_at desc);
+create index if not exists idx_qna_feedback_author on public.qna_feedback (author_user_id);
+
 -- AUDIT LOGS (for secure realtime fan-out + security audit trail)
 create table if not exists public.audit_logs (
   id uuid primary key default gen_random_uuid(),
@@ -558,6 +611,7 @@ alter table if exists public.workspace_tasks enable row level security;
 alter table if exists public.workspace_meeting_notes enable row level security;
 alter table if exists public.workspace_agreement_notes enable row level security;
 alter table if exists public.workspace_comments enable row level security;
+alter table if exists public.qna_feedback enable row level security;
 alter table if exists public.audit_logs enable row level security;
 alter table if exists public.ux_actions enable row level security;
 alter table if exists public.ux_click_events enable row level security;
@@ -580,6 +634,7 @@ alter table if exists public.workspace_tasks force row level security;
 alter table if exists public.workspace_meeting_notes force row level security;
 alter table if exists public.workspace_agreement_notes force row level security;
 alter table if exists public.workspace_comments force row level security;
+alter table if exists public.qna_feedback force row level security;
 alter table if exists public.audit_logs force row level security;
 alter table if exists public.ux_actions force row level security;
 alter table if exists public.ux_click_events force row level security;
@@ -603,6 +658,7 @@ revoke all on table public.workspace_tasks from anon, authenticated;
 revoke all on table public.workspace_meeting_notes from anon, authenticated;
 revoke all on table public.workspace_agreement_notes from anon, authenticated;
 revoke all on table public.workspace_comments from anon, authenticated;
+revoke all on table public.qna_feedback from anon, authenticated;
 revoke all on table public.audit_logs from anon, authenticated;
 revoke all on table public.ux_actions from anon, authenticated;
 revoke all on table public.ux_click_events from anon, authenticated;

@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -9,6 +10,7 @@ import CreateTeamModal from "@/components/teams/CreateTeamModal";
 import { Globe, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { trackUxClick } from "@/lib/ux/client";
+import { useLanguage } from "@/components/providers";
 
 interface DiscoveryClientPageProps {
     initialSearchQuery?: string;
@@ -23,6 +25,8 @@ interface ContextMenuState {
 
 export default function DiscoveryClientPage({ initialSearchQuery = "" }: DiscoveryClientPageProps) {
     const router = useRouter();
+    const { t } = useLanguage();
+    const { status: sessionStatus } = useSession();
     const [activeTab, setActiveTab] = useState<"teams" | "people">("teams");
     const [teams, setTeams] = useState<any[]>([]);
     const [people, setPeople] = useState<any[]>([]);
@@ -70,6 +74,9 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
         return trimmed.slice(0, 160);
     };
 
+    const getTeamDescriptionForView = (team: any) =>
+        String(team?.descriptionTranslated || team?.description || "").trim();
+
     const openNotice = (title: string, message: string) => {
         setNotice({
             open: true,
@@ -95,7 +102,7 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                 return;
             }
             if (!res.ok) {
-                throw new Error("Failed to load discovery data.");
+                throw new Error(t("discovery.error.loadFailedMessage"));
             }
 
             const data = (await res.json()) as {
@@ -107,15 +114,15 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
             setPeople(Array.isArray(data.people) ? data.people : []);
 
             if (data.partialError) {
-                openNotice("일부 데이터 로드 실패", "일부 데이터만 먼저 표시됩니다. 잠시 후 다시 시도해 주세요.");
+                openNotice(t("discovery.error.partialLoadTitle"), t("discovery.error.partialLoadMessage"));
             }
         } catch (error) {
             console.error("Failed to fetch discovery data", error);
-            openNotice("로드 실패", "Discovery 데이터를 불러오지 못했습니다.");
+            openNotice(t("discovery.error.loadFailedTitle"), t("discovery.error.loadFailedMessage"));
         } finally {
             setLoading(false);
         }
-    }, [router]);
+    }, [router, t]);
 
     useEffect(() => {
         void fetchData();
@@ -188,6 +195,10 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
     };
 
     const openJoinComposer = (team: any) => {
+        if (sessionStatus === "unauthenticated") {
+            router.push("/login");
+            return;
+        }
         const teamId = String(team?.teamId || "").trim();
         if (!teamId) return;
         trackDiscoveryAction("discovery.team_request", { teamId });
@@ -195,8 +206,8 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
         setComposer({
             isOpen: true,
             toUserId: teamId,
-            toUsername: team?.name || "Team",
-            message: "I'd like to join your team.",
+            toUsername: team?.name || t("discovery.defaultTeamName"),
+            message: t("discovery.fallbackJoinMessage"),
             isSubmitting: false,
             error: "",
         });
@@ -205,7 +216,7 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
     const submitComposer = async () => {
         if (!composer.isOpen || composer.isSubmitting) return;
 
-        const fallback = "I'd like to join your team.";
+        const fallback = t("discovery.fallbackJoinMessage");
         const message = normalizeShortMessage(composer.message, fallback);
 
         setComposer((prev) => ({ ...prev, isSubmitting: true, error: "" }));
@@ -234,7 +245,7 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                             : team
                     )
                 );
-                openNotice("Request sent", "Your join request has been sent.");
+                openNotice(t("discovery.notice.requestSentTitle"), t("discovery.notice.requestSentMessage"));
                 setComposer((prev) => ({ ...prev, isOpen: false, isSubmitting: false, error: "" }));
                 return;
             }
@@ -247,7 +258,10 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
                             : team
                     )
                 );
-                openNotice("Already requested", data.error || "A join request already exists for this team.");
+                openNotice(
+                    t("discovery.notice.alreadyRequestedTitle"),
+                    data.error || t("discovery.notice.alreadyRequestedMessage")
+                );
                 setComposer((prev) => ({ ...prev, isOpen: false, isSubmitting: false, error: "" }));
                 return;
             }
@@ -255,11 +269,11 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
             setComposer((prev) => ({
                 ...prev,
                 isSubmitting: false,
-                error: data.error || "Failed to send request.",
+                error: data.error || t("discovery.error.requestFailed"),
             }));
         } catch (error) {
             console.error(error);
-            setComposer((prev) => ({ ...prev, isSubmitting: false, error: "Failed to send request." }));
+            setComposer((prev) => ({ ...prev, isSubmitting: false, error: t("discovery.error.requestFailed") }));
         }
     };
 
@@ -269,6 +283,7 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
             const candidates = [
                 team?.name,
                 team?.description,
+                team?.descriptionTranslated,
                 team?.visibility,
                 team?.stage,
                 team?.language,
@@ -300,437 +315,451 @@ export default function DiscoveryClientPage({ initialSearchQuery = "" }: Discove
 
     return (
         <>
-        <div className="space-y-6">
-            {isSearching ? (
-                <div className="space-y-1 border-b border-[var(--border)] pb-4">
-                    <h1 className="text-2xl font-bold text-[var(--fg)]">Search Results</h1>
-                    <p className="text-sm text-[var(--muted)]">
-                        {searchQuery} - Teams {filteredTeams.length}, People {filteredPeople.length}
-                    </p>
-                </div>
-            ) : (
-                <>
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h1 className="text-2xl font-bold text-[var(--fg)]">Discovery</h1>
-                            <p className="text-[var(--muted)]">Explore teams and people.</p>
-                        </div>
-                        {activeTab === "teams" && (
-                            <Button
-                                onClick={() => {
-                                    trackDiscoveryAction("discovery.create_team");
-                                    setIsCreateTeamOpen(true);
-                                }}
-                                className="hover:brightness-90 active:brightness-85"
-                            >
-                                <Plus className="w-4 h-4 mr-2" />
-                                Create Team
-                            </Button>
-                        )}
+            <div className="space-y-6">
+                {isSearching ? (
+                    <div className="space-y-1 border-b border-[var(--border)] pb-4">
+                        <h1 className="text-2xl font-bold text-[var(--fg)]">{t("discovery.searchResults")}</h1>
+                        <p className="text-sm text-[var(--muted)]">
+                            {t("discovery.searchSummary", {
+                                query: searchQuery,
+                                teams: filteredTeams.length,
+                                people: filteredPeople.length,
+                            })}
+                        </p>
                     </div>
-
-                    <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
-                        <div className="flex gap-4">
-                            <button
-                                onClick={() => {
-                                    trackDiscoveryAction("discovery.tab_team");
-                                    setActiveTab("teams");
-                                }}
-                                className={cn(
-                                    "text-sm font-medium transition-colors pb-1 border-b-2",
-                                    activeTab === "teams" ? "text-[var(--primary)] border-[var(--primary)]" : "text-[var(--muted)] border-transparent hover:text-[var(--fg)]"
-                                )}
-                            >
-                                Teams
-                            </button>
-                            <button
-                                onClick={() => {
-                                    trackDiscoveryAction("discovery.tab_people");
-                                    setActiveTab("people");
-                                }}
-                                className={cn(
-                                    "text-sm font-medium transition-colors pb-1 border-b-2",
-                                    activeTab === "people" ? "text-[var(--primary)] border-[var(--primary)]" : "text-[var(--muted)] border-transparent hover:text-[var(--fg)]"
-                                )}
-                            >
-                                People
-                            </button>
-                        </div>
-                        {activeTab === "teams" && (
-                            <p className="text-xs text-[var(--muted)]">Discovery shows public teams only.</p>
-                        )}
-                    </div>
-                </>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {loading ? <div className="text-[var(--muted)]">Loading...</div> :
-                    isSearching ? (
-                        filteredTeams.length === 0 && filteredPeople.length === 0 ? (
-                            <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-6 text-sm text-[var(--muted)]">
-                                No results matched your search.
+                ) : (
+                    <>
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h1 className="text-2xl font-bold text-[var(--fg)]">{t("nav.discovery")}</h1>
+                                <p className="text-[var(--muted)]">{t("discovery.subtitle")}</p>
                             </div>
-                        ) : (
-                            <>
-                                {filteredTeams.map(team => {
-                                    return (
-                                    <Card
-                                        key={`team:${team.id}`}
-                                        className="p-5 hover:shadow-lg transition-colors"
-                                        onContextMenu={(event) => openProfileMenu(event, "team", team.teamId)}
-                                    >
-                                        <div className="flex justify-between items-start mb-3">
-                                            <div className="h-10 w-10 rounded bg-[var(--card-bg-hover)] border border-[var(--border)] flex items-center justify-center text-[var(--primary)]">
-                                                <Globe className="w-5 h-5" />
-                                            </div>
-                                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] border border-emerald-500/20">
-                                                {team.visibility}
-                                            </span>
-                                        </div>
-                                        <p className="font-bold text-[var(--fg)]">
-                                            {team.name}
-                                        </p>
-                                        <p className="text-sm text-[var(--muted)] mt-1 line-clamp-2 h-10">{team.description}</p>
-                                        <div className="mt-4 flex items-center gap-2">
-                                            <Link
-                                                href={`/teams/${encodeURIComponent(team.teamId)}`}
-                                                onClick={() =>
-                                                    trackDiscoveryAction("discovery.open_team_profile", {
-                                                        teamId: team.teamId,
-                                                    })
-                                                }
-                                                className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                                            >
-                                                Profile
-                                            </Link>
-                                            {team.isJoined ? (
-                                                <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
-                                                    Already Joined
-                                                </span>
-                                            ) : team.isJoinRequested ? (
-                                                <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
-                                                    Requested
-                                                </span>
-                                            ) : (
-                                                <Button
-                                                    className="flex-1"
-                                                    variant="secondary"
-                                                    size="sm"
-                                                    onClick={() => openJoinComposer(team)}
-                                                    disabled={
-                                                        composer.isSubmitting &&
-                                                        composer.toUserId === team.teamId
-                                                    }
-                                                >
-                                                    {composer.isSubmitting &&
-                                                    composer.toUserId === team.teamId
-                                                        ? "Applying..."
-                                                        : "Apply to Join"}
-                                                </Button>
-                                            )}
-                                        </div>
-                                    </Card>
-                                    );
-                                })}
-                                {filteredPeople.map(person => {
-                                    return (
-                                    <Card
-                                        key={`user:${person.id}`}
-                                        className="p-4 flex flex-col gap-4"
-                                        onContextMenu={(event) => openProfileMenu(event, "user", person.userId)}
-                                    >
-                                        <div className="flex items-center gap-4">
-                                            <div
-                                                className="h-12 w-12 rounded-full bg-[var(--card-bg-hover)] border border-[var(--border)] flex items-center justify-center text-[var(--fg)] font-bold text-lg shrink-0"
-                                                aria-label={`${person.username || "user"} avatar`}
-                                            >
-                                                {person.username?.[0] || "?"}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex justify-between items-start">
-                                                    <p className="font-bold text-[var(--fg)] text-base truncate">
-                                                        {person.username}
-                                                    </p>
-                                                    {person.language && (
-                                                        <span className="text-[10px] px-1.5 py-0.5 bg-[var(--card-bg-hover)] rounded border border-[var(--border)] text-[var(--muted)] uppercase">
-                                                            {person.language}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <p className="text-[10px] text-[var(--muted)] mt-0.5">{person.publicCode || "-"}</p>
-                                                <div className="flex flex-wrap gap-1 mt-1">
-                                                    {person.skills && person.skills.length > 0 ? (
-                                                        person.skills.slice(0, 2).map((skill: string) => (
-                                                            <span key={skill} className="text-[10px] text-indigo-700 dark:text-indigo-300 bg-indigo-500/10 px-1.5 rounded">
-                                                                {skill}
-                                                            </span>
-                                                        ))
-                                                    ) : (
-                                                        <span className="text-[10px] text-[var(--muted)] italic">No skills yet</span>
-                                                    )}
-                                                    {person.skills?.length > 2 && <span className="text-[10px] text-[var(--muted)]">+{person.skills.length - 2}</span>}
-                                                </div>
-                                                <p className="text-xs text-[var(--muted)] mt-2 line-clamp-2 min-h-8">
-                                                    {person.bio?.trim() ? person.bio : "No bio yet."}
-                                                </p>
-                                            </div>
-                                        </div>
+                            {activeTab === "teams" && (
+                                <Button
+                                    onClick={() => {
+                                        if (sessionStatus === "unauthenticated") {
+                                            router.push("/login");
+                                            return;
+                                        }
+                                        trackDiscoveryAction("discovery.create_team");
+                                        setIsCreateTeamOpen(true);
+                                    }}
+                                    className="hover:brightness-90 active:brightness-85"
+                                >
+                                    <Plus className="w-4 h-4 mr-2" />
+                                    {t("nav.createTeam")}
+                                </Button>
+                            )}
+                        </div>
 
-                                        <div className="flex justify-between items-center text-xs text-[var(--muted)] border-t border-[var(--border)] pt-3">
-                                            <span>{person.availabilityHours || "Hours not set"} / week</span>
-                                            <div className="flex">
+                        <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={() => {
+                                        trackDiscoveryAction("discovery.tab_team");
+                                        setActiveTab("teams");
+                                    }}
+                                    className={cn(
+                                        "text-sm font-medium transition-colors pb-1 border-b-2",
+                                        activeTab === "teams" ? "text-[var(--primary)] border-[var(--primary)]" : "text-[var(--muted)] border-transparent hover:text-[var(--fg)]"
+                                    )}
+                                >
+                                    {t("discovery.tabTeams")}
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        trackDiscoveryAction("discovery.tab_people");
+                                        setActiveTab("people");
+                                    }}
+                                    className={cn(
+                                        "text-sm font-medium transition-colors pb-1 border-b-2",
+                                        activeTab === "people" ? "text-[var(--primary)] border-[var(--primary)]" : "text-[var(--muted)] border-transparent hover:text-[var(--fg)]"
+                                    )}
+                                >
+                                    {t("discovery.tabPeople")}
+                                </button>
+                            </div>
+                            {activeTab === "teams" && (
+                                <p className="text-xs text-[var(--muted)]">{t("discovery.publicOnlyHint")}</p>
+                            )}
+                        </div>
+                    </>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {loading ? <div className="text-[var(--muted)]">{t("common.loading")}</div> :
+                        isSearching ? (
+                            filteredTeams.length === 0 && filteredPeople.length === 0 ? (
+                                <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-6 text-sm text-[var(--muted)]">
+                                    {t("discovery.noResults")}
+                                </div>
+                            ) : (
+                                <>
+                                    {filteredTeams.map(team => {
+                                        return (
+                                            <Card
+                                                key={`team:${team.id}`}
+                                                className="p-5 hover:shadow-lg transition-colors"
+                                                onContextMenu={(event) => openProfileMenu(event, "team", team.teamId)}
+                                            >
+                                                <div className="flex justify-between items-start mb-3">
+                                                    <div className="h-10 w-10 rounded bg-[var(--card-bg-hover)] border border-[var(--border)] flex items-center justify-center text-[var(--primary)]">
+                                                        <Globe className="w-5 h-5" />
+                                                    </div>
+                                                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] border border-emerald-500/20">
+                                                        {team.visibility}
+                                                    </span>
+                                                </div>
+                                                <p className="font-bold text-[var(--fg)]">
+                                                    {team.name}
+                                                </p>
+                                                <p className="text-sm text-[var(--muted)] mt-1 line-clamp-2 h-10">
+                                                    {getTeamDescriptionForView(team)}
+                                                </p>
+                                                <div className="mt-4 flex items-center gap-2">
+                                                    <Link
+                                                        href={`/teams/${encodeURIComponent(team.teamId)}`}
+                                                        onClick={() =>
+                                                            trackDiscoveryAction("discovery.open_team_profile", {
+                                                                teamId: team.teamId,
+                                                            })
+                                                        }
+                                                        className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                                    >
+                                                        {t("discovery.profile")}
+                                                    </Link>
+                                                    {team.isJoined ? (
+                                                        <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
+                                                            {t("discovery.alreadyJoined")}
+                                                        </span>
+                                                    ) : team.isJoinRequested ? (
+                                                        <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
+                                                            {t("discovery.requested")}
+                                                        </span>
+                                                    ) : (
+                                                        <Button
+                                                            className="flex-1"
+                                                            variant="secondary"
+                                                            size="sm"
+                                                            onClick={() => openJoinComposer(team)}
+                                                            disabled={
+                                                                composer.isSubmitting &&
+                                                                composer.toUserId === team.teamId
+                                                            }
+                                                        >
+                                                            {composer.isSubmitting &&
+                                                                composer.toUserId === team.teamId
+                                                                ? t("discovery.applying")
+                                                                : t("discovery.applyToJoin")}
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            </Card>
+                                        );
+                                    })}
+                                    {filteredPeople.map(person => {
+                                        return (
+                                            <Card
+                                                key={`user:${person.id}`}
+                                                className="p-4 flex flex-col gap-4"
+                                                onContextMenu={(event) => openProfileMenu(event, "user", person.userId)}
+                                            >
+                                                <div className="flex items-center gap-4">
+                                                    <div
+                                                        className="h-12 w-12 rounded-full bg-[var(--card-bg-hover)] border border-[var(--border)] flex items-center justify-center text-[var(--fg)] font-bold text-lg shrink-0"
+                                                        aria-label={`${person.username || t("discovery.userFallback")} ${t("discovery.avatar")}`}
+                                                    >
+                                                        {person.username?.[0] || "?"}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex justify-between items-start">
+                                                            <p className="font-bold text-[var(--fg)] text-base truncate">
+                                                                {person.username}
+                                                            </p>
+                                                            {person.language && (
+                                                                <span className="text-[10px] px-1.5 py-0.5 bg-[var(--card-bg-hover)] rounded border border-[var(--border)] text-[var(--muted)] uppercase">
+                                                                    {person.language}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-[10px] text-[var(--muted)] mt-0.5">{person.publicCode || "-"}</p>
+                                                        <div className="flex flex-wrap gap-1 mt-1">
+                                                            {person.skills && person.skills.length > 0 ? (
+                                                                person.skills.slice(0, 2).map((skill: string) => (
+                                                                    <span key={skill} className="text-[10px] text-indigo-700 dark:text-indigo-300 bg-indigo-500/10 px-1.5 rounded">
+                                                                        {skill}
+                                                                    </span>
+                                                                ))
+                                                            ) : (
+                                                                <span className="text-[10px] text-[var(--muted)] italic">{t("discovery.noSkillsYet")}</span>
+                                                            )}
+                                                            {person.skills?.length > 2 && <span className="text-[10px] text-[var(--muted)]">+{person.skills.length - 2}</span>}
+                                                        </div>
+                                                        <p className="text-xs text-[var(--muted)] mt-2 line-clamp-2 min-h-8">
+                                                            {person.bio?.trim() ? person.bio : t("discovery.noBioYet")}
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex justify-between items-center text-xs text-[var(--muted)] border-t border-[var(--border)] pt-3">
+                                                    <span>{person.availabilityHours || t("discovery.hoursNotSet")} / {t("discovery.perWeek")}</span>
+                                                    <div className="flex">
+                                                        <Link
+                                                            href={`/people/${encodeURIComponent(person.userId)}`}
+                                                            onClick={() =>
+                                                                trackDiscoveryAction("discovery.open_user_profile", {
+                                                                    userId: person.userId,
+                                                                })
+                                                            }
+                                                            className="h-7 px-3 inline-flex items-center rounded border border-[var(--border)] text-[11px] text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                                        >
+                                                            {t("discovery.profile")}
+                                                        </Link>
+                                                    </div>
+                                                </div>
+                                            </Card>
+                                        )
+                                    })}
+                                </>
+                            )
+                        ) : activeTab === "teams" ? (
+                            filteredTeams.length === 0 ? (
+                                <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-6 text-sm text-[var(--muted)]">
+                                    {searchQuery ? t("discovery.noTeamsMatched") : t("discovery.noTeamsFound")}
+                                </div>
+                            ) : (
+                                filteredTeams.map(team => {
+                                    return (
+                                        <Card
+                                            key={team.id}
+                                            className="p-5 hover:shadow-lg transition-colors"
+                                            onContextMenu={(event) => openProfileMenu(event, "team", team.teamId)}
+                                        >
+                                            <div className="flex justify-between items-start mb-3">
+                                                <div className="h-10 w-10 rounded bg-[var(--card-bg-hover)] border border-[var(--border)] flex items-center justify-center text-[var(--primary)]">
+                                                    <Globe className="w-5 h-5" />
+                                                </div>
+                                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] border border-emerald-500/20">
+                                                    {team.visibility}
+                                                </span>
+                                            </div>
+                                            <p className="font-bold text-[var(--fg)]">
+                                                {team.name}
+                                            </p>
+                                            <p className="text-sm text-[var(--muted)] mt-1 line-clamp-2 h-10">
+                                                {getTeamDescriptionForView(team)}
+                                            </p>
+                                            <div className="mt-4 flex items-center gap-2">
                                                 <Link
-                                                    href={`/people/${encodeURIComponent(person.userId)}`}
+                                                    href={`/teams/${encodeURIComponent(team.teamId)}`}
                                                     onClick={() =>
-                                                        trackDiscoveryAction("discovery.open_user_profile", {
-                                                            userId: person.userId,
+                                                        trackDiscoveryAction("discovery.open_team_profile", {
+                                                            teamId: team.teamId,
                                                         })
                                                     }
-                                                    className="h-7 px-3 inline-flex items-center rounded border border-[var(--border)] text-[11px] text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                                    className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                                 >
-                                                    Profile
+                                                    {t("discovery.profile")}
                                                 </Link>
-                                            </div>
-                                        </div>
-                                    </Card>
-                                )})}
-                            </>
-                        )
-                    ) : activeTab === "teams" ? (
-                        filteredTeams.length === 0 ? (
-                            <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-6 text-sm text-[var(--muted)]">
-                                {searchQuery ? "No teams matched your search." : "No teams found."}
-                            </div>
-                        ) : (
-                        filteredTeams.map(team => {
-                            return (
-                            <Card
-                                key={team.id}
-                                className="p-5 hover:shadow-lg transition-colors"
-                                onContextMenu={(event) => openProfileMenu(event, "team", team.teamId)}
-                            >
-                                <div className="flex justify-between items-start mb-3">
-                                    <div className="h-10 w-10 rounded bg-[var(--card-bg-hover)] border border-[var(--border)] flex items-center justify-center text-[var(--primary)]">
-                                        <Globe className="w-5 h-5" />
-                                    </div>
-                                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] border border-emerald-500/20">
-                                        {team.visibility}
-                                    </span>
-                                </div>
-                                <p className="font-bold text-[var(--fg)]">
-                                    {team.name}
-                                </p>
-                                <p className="text-sm text-[var(--muted)] mt-1 line-clamp-2 h-10">{team.description}</p>
-                                <div className="mt-4 flex items-center gap-2">
-                                    <Link
-                                        href={`/teams/${encodeURIComponent(team.teamId)}`}
-                                        onClick={() =>
-                                            trackDiscoveryAction("discovery.open_team_profile", {
-                                                teamId: team.teamId,
-                                            })
-                                        }
-                                        className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                                    >
-                                        Profile
-                                    </Link>
-                                    {team.isJoined ? (
-                                        <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
-                                            Already Joined
-                                        </span>
-                                    ) : team.isJoinRequested ? (
-                                        <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
-                                            Requested
-                                        </span>
-                                    ) : (
-                                        <Button
-                                            className="flex-1"
-                                            variant="secondary"
-                                            size="sm"
-                                            onClick={() => openJoinComposer(team)}
-                                            disabled={
-                                                composer.isSubmitting &&
-                                                composer.toUserId === team.teamId
-                                            }
-                                        >
-                                            {composer.isSubmitting &&
-                                            composer.toUserId === team.teamId
-                                                ? "Applying..."
-                                                : "Apply to Join"}
-                                        </Button>
-                                    )}
-                                </div>
-                            </Card>
-                            );
-                        }))
-                    ) : (
-                        filteredPeople.length === 0 ? (
-                            <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-6 text-sm text-[var(--muted)]">
-                                {searchQuery ? "No people matched your search." : "No people found."}
-                            </div>
-                        ) : (
-                        filteredPeople.map(person => {
-                            return (
-                            <Card
-                                key={person.id}
-                                className="p-4 flex flex-col gap-4"
-                                onContextMenu={(event) => openProfileMenu(event, "user", person.userId)}
-                            >
-                                <div className="flex items-center gap-4">
-                                    <div
-                                        className="h-12 w-12 rounded-full bg-[var(--card-bg-hover)] border border-[var(--border)] flex items-center justify-center text-[var(--fg)] font-bold text-lg shrink-0"
-                                        aria-label={`${person.username || "user"} avatar`}
-                                    >
-                                        {person.username?.[0] || "?"}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex justify-between items-start">
-                                            <p className="font-bold text-[var(--fg)] text-base truncate">
-                                                {person.username}
-                                            </p>
-                                            {person.language && (
-                                                <span className="text-[10px] px-1.5 py-0.5 bg-[var(--card-bg-hover)] rounded border border-[var(--border)] text-[var(--muted)] uppercase">
-                                                    {person.language}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <p className="text-[10px] text-[var(--muted)] mt-0.5">{person.publicCode || "-"}</p>
-                                        <div className="flex flex-wrap gap-1 mt-1">
-                                            {person.skills && person.skills.length > 0 ? (
-                                                person.skills.slice(0, 2).map((skill: string) => (
-                                                    <span key={skill} className="text-[10px] text-indigo-700 dark:text-indigo-300 bg-indigo-500/10 px-1.5 rounded">
-                                                        {skill}
+                                                {team.isJoined ? (
+                                                    <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
+                                                        {t("discovery.alreadyJoined")}
                                                     </span>
-                                                ))
-                                            ) : (
-                                                <span className="text-[10px] text-[var(--muted)] italic">No skills yet</span>
-                                            )}
-                                            {person.skills?.length > 2 && <span className="text-[10px] text-[var(--muted)]">+{person.skills.length - 2}</span>}
-                                        </div>
-                                        <p className="text-xs text-[var(--muted)] mt-2 line-clamp-2 min-h-8">
-                                            {person.bio?.trim() ? person.bio : "No bio yet."}
-                                        </p>
-                                    </div>
+                                                ) : team.isJoinRequested ? (
+                                                    <span className="h-9 flex-1 inline-flex items-center justify-center rounded-md border border-[var(--border)] text-xs font-medium text-[var(--muted)] bg-[var(--input-bg)]">
+                                                        {t("discovery.requested")}
+                                                    </span>
+                                                ) : (
+                                                    <Button
+                                                        className="flex-1"
+                                                        variant="secondary"
+                                                        size="sm"
+                                                        onClick={() => openJoinComposer(team)}
+                                                        disabled={
+                                                            composer.isSubmitting &&
+                                                            composer.toUserId === team.teamId
+                                                        }
+                                                    >
+                                                        {composer.isSubmitting &&
+                                                            composer.toUserId === team.teamId
+                                                            ? t("discovery.applying")
+                                                            : t("discovery.applyToJoin")}
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        </Card>
+                                    );
+                                }))
+                        ) : (
+                            filteredPeople.length === 0 ? (
+                                <div className="md:col-span-2 lg:col-span-3 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] p-6 text-sm text-[var(--muted)]">
+                                    {searchQuery ? t("discovery.noPeopleMatched") : t("discovery.noPeopleFound")}
                                 </div>
-
-                                <div className="flex justify-between items-center text-xs text-[var(--muted)] border-t border-[var(--border)] pt-3">
-                                    <span>{person.availabilityHours || "Hours not set"} / week</span>
-                                    <div className="flex">
-                                        <Link
-                                            href={`/people/${encodeURIComponent(person.userId)}`}
-                                            onClick={() =>
-                                                trackDiscoveryAction("discovery.open_user_profile", {
-                                                    userId: person.userId,
-                                                })
-                                            }
-                                            className="h-7 px-3 inline-flex items-center rounded border border-[var(--border)] text-[11px] text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                            ) : (
+                                filteredPeople.map(person => {
+                                    return (
+                                        <Card
+                                            key={person.id}
+                                            className="p-4 flex flex-col gap-4"
+                                            onContextMenu={(event) => openProfileMenu(event, "user", person.userId)}
                                         >
-                                            Profile
-                                        </Link>
-                                    </div>
-                                </div>
-                            </Card>
-                        )}))
-                    )
-                }
-            </div>
-        </div>
+                                            <div className="flex items-center gap-4">
+                                                <div
+                                                    className="h-12 w-12 rounded-full bg-[var(--card-bg-hover)] border border-[var(--border)] flex items-center justify-center text-[var(--fg)] font-bold text-lg shrink-0"
+                                                    aria-label={`${person.username || t("discovery.userFallback")} ${t("discovery.avatar")}`}
+                                                >
+                                                    {person.username?.[0] || "?"}
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex justify-between items-start">
+                                                        <p className="font-bold text-[var(--fg)] text-base truncate">
+                                                            {person.username}
+                                                        </p>
+                                                        {person.language && (
+                                                            <span className="text-[10px] px-1.5 py-0.5 bg-[var(--card-bg-hover)] rounded border border-[var(--border)] text-[var(--muted)] uppercase">
+                                                                {person.language}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-[10px] text-[var(--muted)] mt-0.5">{person.publicCode || "-"}</p>
+                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                        {person.skills && person.skills.length > 0 ? (
+                                                            person.skills.slice(0, 2).map((skill: string) => (
+                                                                <span key={skill} className="text-[10px] text-indigo-700 dark:text-indigo-300 bg-indigo-500/10 px-1.5 rounded">
+                                                                    {skill}
+                                                                </span>
+                                                            ))
+                                                        ) : (
+                                                            <span className="text-[10px] text-[var(--muted)] italic">{t("discovery.noSkillsYet")}</span>
+                                                        )}
+                                                        {person.skills?.length > 2 && <span className="text-[10px] text-[var(--muted)]">+{person.skills.length - 2}</span>}
+                                                    </div>
+                                                    <p className="text-xs text-[var(--muted)] mt-2 line-clamp-2 min-h-8">
+                                                        {person.bio?.trim() ? person.bio : t("discovery.noBioYet")}
+                                                    </p>
+                                                </div>
+                                            </div>
 
-        {composer.isOpen && (
-            <div
-                className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm px-4"
-                onMouseDown={(event) => {
-                    if (event.target === event.currentTarget) {
-                        closeComposer();
+                                            <div className="flex justify-between items-center text-xs text-[var(--muted)] border-t border-[var(--border)] pt-3">
+                                                <span>{person.availabilityHours || t("discovery.hoursNotSet")} / {t("discovery.perWeek")}</span>
+                                                <div className="flex">
+                                                    <Link
+                                                        href={`/people/${encodeURIComponent(person.userId)}`}
+                                                        onClick={() =>
+                                                            trackDiscoveryAction("discovery.open_user_profile", {
+                                                                userId: person.userId,
+                                                            })
+                                                        }
+                                                        className="h-7 px-3 inline-flex items-center rounded border border-[var(--border)] text-[11px] text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                                    >
+                                                        {t("discovery.profile")}
+                                                    </Link>
+                                                </div>
+                                            </div>
+                                        </Card>
+                                    )
+                                }))
+                        )
                     }
-                }}
-            >
+                </div>
+            </div>
+
+            {composer.isOpen && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm px-4"
+                    onMouseDown={(event) => {
+                        if (event.target === event.currentTarget) {
+                            closeComposer();
+                        }
+                    }}
+                >
                     <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] shadow-2xl">
                         <div className="px-5 py-4 border-b border-[var(--border)]">
-                            <h3 className="text-base font-semibold text-[var(--fg)]">Apply to Join</h3>
+                            <h3 className="text-base font-semibold text-[var(--fg)]">{t("discovery.applyTitle")}</h3>
                             <p className="text-xs text-[var(--muted)] mt-1 truncate">
-                                Team: {composer.toUsername}
+                                {t("discovery.teamPrefix", { name: composer.toUsername })}
                             </p>
                         </div>
 
-                    <div className="px-5 py-4 space-y-3">
-                        <div className="space-y-1">
-                            <label className="text-xs text-[var(--muted)]">Message</label>
-                            <textarea
-                                value={composer.message}
-                                onChange={(event) =>
-                                    setComposer((prev) => ({ ...prev, message: event.target.value.slice(0, 160) }))
-                                }
-                                rows={4}
-                                className="w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
-                                placeholder="Write a short join request..."
-                            />
-                            <div className="text-[10px] text-[var(--muted)] text-right">
-                                {composer.message.length}/160
+                        <div className="px-5 py-4 space-y-3">
+                            <div className="space-y-1">
+                                <label className="text-xs text-[var(--muted)]">{t("discovery.message")}</label>
+                                <textarea
+                                    value={composer.message}
+                                    onChange={(event) =>
+                                        setComposer((prev) => ({ ...prev, message: event.target.value.slice(0, 160) }))
+                                    }
+                                    rows={4}
+                                    className="w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
+                                    placeholder={t("discovery.messagePlaceholder")}
+                                />
+                                <div className="text-[10px] text-[var(--muted)] text-right">
+                                    {composer.message.length}/160
+                                </div>
                             </div>
+
+                            {composer.error && (
+                                <p className="text-xs text-rose-500">{composer.error}</p>
+                            )}
                         </div>
 
-                        {composer.error && (
-                            <p className="text-xs text-rose-500">{composer.error}</p>
-                        )}
-                    </div>
-
-                    <div className="px-5 py-4 border-t border-[var(--border)] flex items-center justify-end gap-2">
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={closeComposer}
-                            disabled={composer.isSubmitting}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => void submitComposer()}
-                            disabled={composer.isSubmitting}
-                        >
-                            {composer.isSubmitting ? "Sending..." : "Send"}
-                        </Button>
+                        <div className="px-5 py-4 border-t border-[var(--border)] flex items-center justify-end gap-2">
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={closeComposer}
+                                disabled={composer.isSubmitting}
+                            >
+                                {t("common.cancel")}
+                            </Button>
+                            <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => void submitComposer()}
+                                disabled={composer.isSubmitting}
+                            >
+                                {composer.isSubmitting ? t("discovery.sending") : t("discovery.send")}
+                            </Button>
+                        </div>
                     </div>
                 </div>
-            </div>
-        )}
-        {profileMenu && (
-            <div
-                data-discovery-profile-menu="true"
-                className="fixed z-[70] min-w-[132px] border rounded-md shadow-md py-1"
-                style={{
-                    left: `${profileMenu.x}px`,
-                    top: `${profileMenu.y}px`,
-                    backgroundColor: "var(--card-bg)",
-                    borderColor: "var(--border)",
-                }}
-                onMouseDown={(event) => event.stopPropagation()}
-            >
-                <button
-                    type="button"
-                    className="w-full text-left px-3 py-1.5 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                    onClick={viewProfileFromMenu}
+            )}
+            {profileMenu && (
+                <div
+                    data-discovery-profile-menu="true"
+                    className="fixed z-[70] min-w-[132px] border rounded-md shadow-md py-1"
+                    style={{
+                        left: `${profileMenu.x}px`,
+                        top: `${profileMenu.y}px`,
+                        backgroundColor: "var(--card-bg)",
+                        borderColor: "var(--border)",
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
                 >
-                    {profileMenu.kind === "team" ? "팀 프로필 보기" : "프로필 보기"}
-                </button>
-            </div>
-        )}
-        <AlertModal
-            open={notice.open}
-            title={notice.title}
-            message={notice.message}
-            onClose={() => setNotice((prev) => ({ ...prev, open: false }))}
-        />
-        <CreateTeamModal
-            open={isCreateTeamOpen}
-            onClose={() => setIsCreateTeamOpen(false)}
-            onCreated={(teamId) => {
-                setIsCreateTeamOpen(false);
-                router.push(`/workspace/${encodeURIComponent(teamId)}`);
-            }}
-        />
+                    <button
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                        onClick={viewProfileFromMenu}
+                    >
+                        {profileMenu.kind === "team" ? t("discovery.contextMenuTeamProfile") : t("discovery.contextMenuUserProfile")}
+                    </button>
+                </div>
+            )}
+            <AlertModal
+                open={notice.open}
+                title={notice.title}
+                message={notice.message}
+                onClose={() => setNotice((prev) => ({ ...prev, open: false }))}
+            />
+            <CreateTeamModal
+                open={isCreateTeamOpen}
+                onClose={() => setIsCreateTeamOpen(false)}
+                onCreated={(teamId) => {
+                    setIsCreateTeamOpen(false);
+                    router.push(`/workspace/${encodeURIComponent(teamId)}`);
+                }}
+            />
         </>
     );
 }

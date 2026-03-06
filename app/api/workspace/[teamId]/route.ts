@@ -15,6 +15,7 @@ import {
     getAgreementNotes,
     createAgreementNote,
     updateAgreementNote,
+    cloneUserFileToTeam,
 } from "@/lib/db/workspace";
 import { getTeamById, getTeamMembers, isActiveMemberStatus, updateTeamMemberRole } from "@/lib/db/teams";
 import { syncAcceptedTeamMembershipsForUser } from "@/lib/db/requests";
@@ -280,7 +281,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ teamId:
         if (!body || typeof body !== "object") {
             return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
         }
-        const { type, title, url, content, status, scope } = body;
+        const { type, id, title, url, content, status, scope } = body;
         const fileScope = resolveWorkspaceFileScope(scope);
         let createdFileId: string | null = null;
 
@@ -290,6 +291,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ teamId:
                 scope: fileScope,
                 ownerUserId: fileScope === "user" ? currentUserId : undefined,
             });
+        }
+        else if (type === "FILE_SHARE_TO_TEAM") {
+            const sourceFileId = String(id || "").trim();
+            if (!sourceFileId) {
+                return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+            }
+            const shared = await cloneUserFileToTeam(teamId, sourceFileId, currentUserId);
+            if (!shared?.id) {
+                return NextResponse.json({ error: "Source file not found." }, { status: 404 });
+            }
+            createdFileId = shared.id;
         }
         else if (type === "TASK") await createTask(teamId, title, status);
         else if (type === "MEETING_NOTE") await createMeetingNote(teamId, title, content);
@@ -306,6 +318,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ teamId:
             metadata: {
                 type: String(type || ""),
                 title: String(title || "").slice(0, 120),
+                id: String(id || ""),
             },
         });
         return NextResponse.json({ success: true, id: createdFileId });
@@ -475,10 +488,16 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ teamI
             return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
         }
 
-        await deleteFile(teamId, String(id), {
+        const deleted = await deleteFile(teamId, String(id), {
             scope: fileScope,
             ownerUserId: fileScope === "user" ? currentUserId : undefined,
         });
+        if (!deleted) {
+            return NextResponse.json(
+                { error: "File not found for the selected workspace scope." },
+                { status: 404 }
+            );
+        }
         invalidateWorkspaceTeamCache(teamId);
         await appendAuditLog({
             category: "workspace",

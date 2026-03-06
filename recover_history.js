@@ -1,5 +1,5 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
 const historyDir = path.join(process.env.APPDATA, 'Code', 'User', 'History');
 const recoveryDir = path.join(process.env.USERPROFILE, 'Desktop', 'onbure_recovery');
@@ -52,7 +52,7 @@ for (const folder of folders) {
                 }
             }
         }
-    } catch (e) {
+    } catch {
         // ignore parse errors
     }
 }

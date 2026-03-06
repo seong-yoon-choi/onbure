@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -6,6 +6,7 @@ import { MessageSquare, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AlertModal } from "@/components/ui/modal";
 import { trackUxClick } from "@/lib/ux/client";
+import { useLanguage } from "@/components/providers";
 
 interface FriendItem {
     userId: string;
@@ -28,6 +29,7 @@ function openDmThread(friend: FriendItem) {
 }
 
 export default function FriendsPage() {
+    const { t } = useLanguage();
     const [loading, setLoading] = useState(true);
     const [friends, setFriends] = useState<FriendItem[]>([]);
     const [myTeams, setMyTeams] = useState<Array<{ teamId: string; name: string }> | null>(null);
@@ -49,7 +51,7 @@ export default function FriendsPage() {
         isOpen: false,
         toUserId: "",
         toUsername: "",
-        message: "I'd like to invite you to my team.",
+        message: "",
         selectedTeamId: "",
         teamOptions: [],
         isSubmitting: false,
@@ -146,7 +148,7 @@ export default function FriendsPage() {
     const getMyTeams = async () => {
         if (myTeams) return myTeams;
         const res = await fetch("/api/chat/teams");
-        if (!res.ok) throw new Error("Failed to load your teams.");
+        if (!res.ok) throw new Error(t("friends.loadTeamsFailedTitle"));
         const data = (await res.json()) as Array<{ teamId: string; name: string }>;
         setMyTeams(data);
         return data;
@@ -158,8 +160,8 @@ export default function FriendsPage() {
             if (!options.length) {
                 setNotice({
                     open: true,
-                    title: "Invite unavailable",
-                    message: "You need at least one team to send an invite.",
+                    title: t("friends.inviteUnavailableTitle"),
+                    message: t("friends.inviteUnavailableMessage"),
                 });
                 return;
             }
@@ -167,7 +169,7 @@ export default function FriendsPage() {
                 isOpen: true,
                 toUserId: friend.userId,
                 toUsername: friend.username,
-                message: "I'd like to invite you to my team.",
+                message: t("friends.inviteDefaultMessage"),
                 selectedTeamId: options[0].teamId,
                 teamOptions: options,
                 isSubmitting: false,
@@ -176,8 +178,8 @@ export default function FriendsPage() {
         } catch {
             setNotice({
                 open: true,
-                title: "Failed to load teams",
-                message: "Please try again in a moment.",
+                title: t("friends.loadTeamsFailedTitle"),
+                message: t("friends.loadTeamsFailedMessage"),
             });
         }
     };
@@ -185,7 +187,7 @@ export default function FriendsPage() {
     const submitInvite = async () => {
         if (!composer.isOpen || composer.isSubmitting) return;
         if (!composer.selectedTeamId) {
-            setComposer((prev) => ({ ...prev, error: "Please select a team." }));
+            setComposer((prev) => ({ ...prev, error: t("friends.selectTeam") }));
             return;
         }
         setComposer((prev) => ({ ...prev, isSubmitting: true, error: "" }));
@@ -198,7 +200,7 @@ export default function FriendsPage() {
                     type: "INVITE",
                     toId: composer.toUserId,
                     teamId: composer.selectedTeamId,
-                    message: normalizeShortMessage(composer.message, "I'd like to invite you to my team."),
+                    message: normalizeShortMessage(composer.message, t("friends.inviteDefaultMessage")),
                 }),
             });
             const data = await res.json().catch(() => ({}));
@@ -209,10 +211,10 @@ export default function FriendsPage() {
             setComposer((prev) => ({
                 ...prev,
                 isSubmitting: false,
-                error: String(data?.error || "Failed to send invite."),
+                error: String(data?.error || t("friends.sendInviteFailed")),
             }));
         } catch {
-            setComposer((prev) => ({ ...prev, isSubmitting: false, error: "Failed to send invite." }));
+            setComposer((prev) => ({ ...prev, isSubmitting: false, error: t("friends.sendInviteFailed") }));
         }
     };
 
@@ -227,19 +229,19 @@ export default function FriendsPage() {
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
-                throw new Error(data.error || "Failed to unfriend.");
+                throw new Error(data.error || t("people.unfriendFailed"));
             }
             setFriends((prev) => prev.filter((f) => f.userId !== friend.userId));
             setNotice({
                 open: true,
-                title: "Friend removed",
-                message: `${friend.username} has been removed from your friends list.`,
+                title: t("friends.friendRemovedTitle"),
+                message: t("friends.friendRemovedMessage", { username: friend.username }),
             });
         } catch (error: any) {
             setNotice({
                 open: true,
-                title: "Error",
-                message: error.message || "Failed to remove friend.",
+                title: t("friends.errorTitle"),
+                message: error.message || t("people.unfriendFailed"),
             });
         } finally {
             setUnfriendContext({ friend: null, isSubmitting: false });
@@ -250,19 +252,17 @@ export default function FriendsPage() {
         <div className="mx-auto w-full max-w-2xl space-y-4">
             <div className="flex items-center gap-2">
                 <Users className="h-5 w-5 text-[var(--primary)]" />
-                <h1 className="text-2xl font-bold text-[var(--fg)]">Friends</h1>
+                <h1 className="text-2xl font-bold text-[var(--fg)]">{t("friends.title")}</h1>
             </div>
-            <p className="text-sm text-[var(--muted)]">
-                Your accepted friend list.
-            </p>
+            <p className="text-sm text-[var(--muted)]">{t("friends.subtitle")}</p>
 
             {loading ? (
                 <div className="rounded-xl border border-[var(--border)] bg-[var(--card-bg)] p-4 text-sm text-[var(--muted)]">
-                    Loading friends...
+                    {t("friends.loading")}
                 </div>
             ) : sortedFriends.length === 0 ? (
                 <div className="rounded-xl border border-[var(--border)] bg-[var(--card-bg)] p-4 text-sm text-[var(--muted)]">
-                    No friends yet.
+                    {t("friends.empty")}
                 </div>
             ) : (
                 <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card-bg)]">
@@ -277,10 +277,10 @@ export default function FriendsPage() {
                             </div>
                             <div className="min-w-0 flex-1">
                                 <div className="truncate text-sm font-semibold text-[var(--fg)]">
-                                    {friend.username || "Unknown"}
+                                    {friend.username || t("friends.unknown")}
                                 </div>
                                 <div className="truncate text-xs text-[var(--muted)]">
-                                    {[friend.country, friend.language].filter(Boolean).join(" · ") || "No details"}
+                                    {[friend.country, friend.language].filter(Boolean).join(" / ") || t("friends.noDetails")}
                                 </div>
                             </div>
                             <div className="flex shrink-0 items-center gap-1.5">
@@ -291,7 +291,7 @@ export default function FriendsPage() {
                                     }
                                     className="inline-flex h-8 items-center rounded-md border border-[var(--border)] px-2.5 text-[11px] text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                 >
-                                    Profile
+                                    {t("friends.profile")}
                                 </Link>
                                 <Button
                                     type="button"
@@ -303,7 +303,7 @@ export default function FriendsPage() {
                                     }}
                                 >
                                     <MessageSquare className="mr-1 h-3.5 w-3.5" />
-                                    Chat
+                                    {t("friends.chat")}
                                 </Button>
                                 <Button
                                     type="button"
@@ -314,7 +314,7 @@ export default function FriendsPage() {
                                         void openInviteComposer(friend);
                                     }}
                                 >
-                                    Invite
+                                    {t("friends.invite")}
                                 </Button>
                             </div>
                         </div>
@@ -333,12 +333,12 @@ export default function FriendsPage() {
                 >
                     <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] shadow-2xl">
                         <div className="border-b border-[var(--border)] px-5 py-4">
-                            <h3 className="text-base font-semibold text-[var(--fg)]">Send Team Invite</h3>
-                            <p className="mt-1 truncate text-xs text-[var(--muted)]">To: {composer.toUsername}</p>
+                            <h3 className="text-base font-semibold text-[var(--fg)]">{t("friends.sendTeamInvite")}</h3>
+                            <p className="mt-1 truncate text-xs text-[var(--muted)]">{t("friends.toPrefix", { name: composer.toUsername })}</p>
                         </div>
                         <div className="space-y-3 px-5 py-4">
                             <div className="space-y-1">
-                                <label className="text-xs text-[var(--muted)]">Team</label>
+                                <label className="text-xs text-[var(--muted)]">{t("friends.teamLabel")}</label>
                                 <select
                                     value={composer.selectedTeamId}
                                     onChange={(event) =>
@@ -354,7 +354,7 @@ export default function FriendsPage() {
                                 </select>
                             </div>
                             <div className="space-y-1">
-                                <label className="text-xs text-[var(--muted)]">Message</label>
+                                <label className="text-xs text-[var(--muted)]">{t("friends.messageLabel")}</label>
                                 <textarea
                                     value={composer.message}
                                     onChange={(event) =>
@@ -362,7 +362,7 @@ export default function FriendsPage() {
                                     }
                                     rows={4}
                                     className="w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
-                                    placeholder="Write a short invite message..."
+                                    placeholder={t("friends.invitePlaceholder")}
                                 />
                                 <div className="text-right text-[10px] text-[var(--muted)]">{composer.message.length}/160</div>
                             </div>
@@ -378,7 +378,7 @@ export default function FriendsPage() {
                                 }
                                 disabled={composer.isSubmitting}
                             >
-                                Cancel
+                                {t("friends.cancel")}
                             </Button>
                             <Button
                                 type="button"
@@ -386,7 +386,7 @@ export default function FriendsPage() {
                                 onClick={() => void submitInvite()}
                                 disabled={composer.isSubmitting}
                             >
-                                {composer.isSubmitting ? "Sending..." : "Send"}
+                                {composer.isSubmitting ? t("friends.sending") : t("friends.send")}
                             </Button>
                         </div>
                     </div>
@@ -410,7 +410,7 @@ export default function FriendsPage() {
                             }}
                             className="block w-full px-4 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                         >
-                            View Profile
+                            {t("friends.viewProfile")}
                         </Link>
                         <button
                             type="button"
@@ -421,7 +421,7 @@ export default function FriendsPage() {
                             }}
                             className="block w-full px-4 py-2 text-left text-sm text-rose-500 hover:bg-rose-500/10 focus:outline-none"
                         >
-                            Unfriend
+                            {t("friends.unfriend")}
                         </button>
                     </div>
                 </div>
@@ -438,9 +438,9 @@ export default function FriendsPage() {
                 >
                     <div className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] shadow-2xl overflow-hidden">
                         <div className="px-6 py-6 text-center">
-                            <h3 className="mb-2 text-lg font-semibold text-[var(--fg)]">Remove Friend?</h3>
+                            <h3 className="mb-2 text-lg font-semibold text-[var(--fg)]">{t("friends.removeFriendTitle")}</h3>
                             <p className="text-sm text-[var(--muted)]">
-                                Are you sure you want to remove <strong>{unfriendContext.friend.username}</strong> from your friends list?
+                                {t("friends.removeFriendMessage", { username: unfriendContext.friend.username })}
                             </p>
                         </div>
                         <div className="flex border-t border-[var(--border)]">
@@ -450,7 +450,7 @@ export default function FriendsPage() {
                                 onClick={() => setUnfriendContext({ friend: null, isSubmitting: false })}
                                 disabled={unfriendContext.isSubmitting}
                             >
-                                Cancel
+                                {t("friends.cancel")}
                             </button>
                             <div className="w-px bg-[var(--border)]" />
                             <button
@@ -459,7 +459,7 @@ export default function FriendsPage() {
                                 onClick={() => void handleUnfriend()}
                                 disabled={unfriendContext.isSubmitting}
                             >
-                                {unfriendContext.isSubmitting ? "Removing..." : "Remove"}
+                                {unfriendContext.isSubmitting ? t("friends.removing") : t("friends.remove")}
                             </button>
                         </div>
                     </div>
@@ -475,3 +475,4 @@ export default function FriendsPage() {
         </div>
     );
 }
+

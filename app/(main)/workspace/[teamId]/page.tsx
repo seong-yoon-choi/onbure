@@ -12,6 +12,7 @@ import {
     File,
     Folder,
     FolderOpen,
+    Loader2,
     MessageCircle,
     MessageSquare,
     NotebookPen,
@@ -22,6 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuditRealtime } from "@/lib/realtime/use-audit-realtime";
 import { trackUxClick } from "@/lib/ux/client";
+import { useLanguage } from "@/components/providers";
 
 interface WorkspaceTeam {
     name: string;
@@ -39,6 +41,7 @@ interface WorkspaceFile {
     title: string;
     url?: string;
     folderId?: string;
+    ownerUserId?: string;
     createdAt?: string;
 }
 
@@ -151,6 +154,7 @@ interface FileItemMenuState {
     x: number;
     y: number;
     fileId: string;
+    moveSubmenuLeft?: boolean;
     shareSubmenuLeft?: boolean;
 }
 
@@ -280,6 +284,15 @@ interface WorkspaceAnnotation {
     updatedAt: string;
 }
 
+interface WorkspaceItemComment {
+    id: string;
+    itemKey: string;
+    authorUserId: string;
+    authorName: string;
+    text: string;
+    createdAt: string;
+}
+
 type WorkspaceGroupItemKind = "file" | "member" | "annotation";
 
 interface WorkspaceGroup {
@@ -354,7 +367,6 @@ const CANVAS_PADDING = 16;
 const CANVAS_COMMENT_PREVIEW_WIDTH = 224;
 const CANVAS_COMMENT_PREVIEW_HEIGHT = 44;
 const CANVAS_PLACEMENT_SEPARATOR = "::";
-const GROUP_HINT_TOOLTIP_TEXT = "Hold Ctrl and drag items to a group.";
 
 function buildCanvasItemKey(kind: WorkspaceGroupItemKind, id: string) {
     return `${kind}:${id}`;
@@ -417,18 +429,22 @@ function getMemberCardWidth(name: string): number {
     return Math.round(clampNumber(estimated, CANVAS_MEMBER_MIN_WIDTH, CANVAS_MEMBER_MAX_WIDTH));
 }
 
-function getDefaultAnnotationTitle(kind: WorkspaceAnnotationKind): string {
-    return kind === "comment" ? "Comment" : "Memo";
+function getDefaultAnnotationTitle(
+    kind: WorkspaceAnnotationKind,
+    resolveLabel?: (key: string) => string
+): string {
+    if (kind === "comment") return resolveLabel ? resolveLabel("workspace.annotation.commentTitle") : "Comment";
+    return resolveLabel ? resolveLabel("workspace.annotation.memoTitle") : "Memo";
 }
 
 function isFolderEntry(file: WorkspaceFile) {
     return String(file.title || "").startsWith("Folder: ");
 }
 
-function getFolderDisplayName(title: string) {
+function getFolderDisplayName(title: string, fallbackLabel = "Folder") {
     const raw = String(title || "");
     if (!raw.startsWith("Folder: ")) return raw;
-    return raw.slice("Folder: ".length).trim() || "Folder";
+    return raw.slice("Folder: ".length).trim() || fallbackLabel;
 }
 
 function extractCanvasPlacementSourceId(rawId: string): string {
@@ -525,6 +541,41 @@ function parseSavedAnnotations(raw: string | null): WorkspaceAnnotation[] {
     }
 }
 
+function parseSavedItemComments(raw: string | null): WorkspaceItemComment[] {
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw) as Array<{
+            id?: string;
+            itemKey?: string;
+            authorUserId?: string;
+            authorName?: string;
+            text?: string;
+            createdAt?: string;
+        }>;
+        if (!Array.isArray(parsed)) return [];
+
+        return parsed
+            .map((item) => {
+                const id = String(item?.id || "").trim();
+                const itemKey = String(item?.itemKey || "").trim();
+                if (!id || !parseCanvasItemKey(itemKey)) return null;
+                const text = String(item?.text || "").trim();
+                if (!text) return null;
+                return {
+                    id,
+                    itemKey,
+                    authorUserId: String(item?.authorUserId || "").trim(),
+                    authorName: String(item?.authorName || "").trim(),
+                    text: text.slice(0, 1000),
+                    createdAt: String(item?.createdAt || new Date().toISOString()),
+                } satisfies WorkspaceItemComment;
+            })
+            .filter(Boolean) as WorkspaceItemComment[];
+    } catch {
+        return [];
+    }
+}
+
 function parseSavedGroups(raw: string | null): WorkspaceGroup[] {
     if (!raw) return [];
     try {
@@ -543,12 +594,12 @@ function parseSavedGroups(raw: string | null): WorkspaceGroup[] {
                 const name = String(item?.name || "").trim().slice(0, 60) || "Group";
                 const itemKeys = Array.isArray(item?.itemKeys)
                     ? Array.from(
-                          new Set(
-                              item.itemKeys
-                                  .map((value) => String(value || "").trim())
-                                  .filter((value) => Boolean(parseCanvasItemKey(value)))
-                          )
-                      )
+                        new Set(
+                            item.itemKeys
+                                .map((value) => String(value || "").trim())
+                                .filter((value) => Boolean(parseCanvasItemKey(value)))
+                        )
+                    )
                     : [];
                 return {
                     id,
@@ -577,6 +628,24 @@ function parseSavedStringArray(raw: string | null): string[] {
         );
     } catch {
         return [];
+    }
+}
+
+function parseSavedStringRecord(raw: string | null): Record<string, string> {
+    if (!raw) return {};
+    try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+        const next: Record<string, string> = {};
+        for (const [key, value] of Object.entries(parsed)) {
+            const normalizedKey = String(key || "").trim();
+            const normalizedValue = String(value || "").trim();
+            if (!normalizedKey || !normalizedValue) continue;
+            next[normalizedKey] = normalizedValue;
+        }
+        return next;
+    } catch {
+        return {};
     }
 }
 
@@ -626,6 +695,7 @@ function resolvePresence(status: string | undefined | null): Presence {
 export default function WorkspacePage() {
     const { teamId: teamIdParam } = useParams<{ teamId: string }>();
     const router = useRouter();
+    const { t } = useLanguage();
     const teamId = Array.isArray(teamIdParam) ? teamIdParam[0] : teamIdParam;
 
     const [data, setData] = useState<WorkspaceData | null>(null);
@@ -639,9 +709,11 @@ export default function WorkspacePage() {
         title: "",
         message: "",
     });
+    const [workspaceActionPendingCount, setWorkspaceActionPendingCount] = useState(0);
 
     const [canvasFilePositions, setCanvasFilePositions] = useState<Record<string, CanvasPosition>>({});
     const [canvasMemberPositions, setCanvasMemberPositions] = useState<Record<string, CanvasPosition>>({});
+    const [canvasMemberPlacementOwners, setCanvasMemberPlacementOwners] = useState<Record<string, string>>({});
     const [movingFile, setMovingFile] = useState<MovingFileState | null>(null);
     const [movingMember, setMovingMember] = useState<MovingMemberState | null>(null);
     const [movingAnnotation, setMovingAnnotation] = useState<MovingAnnotationState | null>(null);
@@ -698,6 +770,10 @@ export default function WorkspacePage() {
     });
     const [workspaceCanvasMenu, setWorkspaceCanvasMenu] = useState<WorkspaceCanvasMenuState | null>(null);
     const [annotations, setAnnotations] = useState<WorkspaceAnnotation[]>([]);
+    const [itemComments, setItemComments] = useState<WorkspaceItemComment[]>([]);
+    const [activeItemCommentKey, setActiveItemCommentKey] = useState<string | null>(null);
+    const [commentWindowPosition, setCommentWindowPosition] = useState<{ x: number; y: number } | null>(null);
+    const [itemCommentDraft, setItemCommentDraft] = useState("");
     const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
     const [editingAnnotationTitleId, setEditingAnnotationTitleId] = useState<string | null>(null);
     const [canvasSelection, setCanvasSelection] = useState<CanvasSelectionState | null>(null);
@@ -719,6 +795,7 @@ export default function WorkspacePage() {
     const groupInlineRenameInputRef = useRef<HTMLInputElement | null>(null);
     const annotationEditorRef = useRef<HTMLTextAreaElement | null>(null);
     const annotationTitleInputRef = useRef<HTMLInputElement | null>(null);
+    const itemCommentInputRef = useRef<HTMLTextAreaElement | null>(null);
     const createEntryDialogTitleId = useId();
     const createEntryInputId = useId();
     const moveFileDialogTitleId = useId();
@@ -727,10 +804,20 @@ export default function WorkspacePage() {
     const groupsSidebarSelectionRef = useRef<HTMLDivElement | null>(null);
     const fileLayoutLoadedKeyRef = useRef<string | null>(null);
     const memberLayoutLoadedKeyRef = useRef<string | null>(null);
+    const memberOwnersLoadedKeyRef = useRef<string | null>(null);
     const annotationLoadedKeyRef = useRef<string | null>(null);
+    const itemCommentsLoadedKeyRef = useRef<string | null>(null);
     const activeAnnotationLoadedKeyRef = useRef<string | null>(null);
+    const groupsLoadedKeyRef = useRef<string | null>(null);
+    const hiddenGroupsLoadedKeyRef = useRef<string | null>(null);
+    const hiddenItemsLoadedKeyRef = useRef<string | null>(null);
+    const [groupsHydratedStorageKey, setGroupsHydratedStorageKey] = useState<string | null>(null);
+    const [hiddenGroupsHydratedStorageKey, setHiddenGroupsHydratedStorageKey] = useState<string | null>(null);
+    const [hiddenItemsHydratedStorageKey, setHiddenItemsHydratedStorageKey] = useState<string | null>(null);
+    const [memberOwnersHydratedStorageKey, setMemberOwnersHydratedStorageKey] = useState<string | null>(null);
     const annotationPointerRef = useRef<{ id: string; startX: number; startY: number; moved: boolean } | null>(null);
     const suppressAnnotationClickIdRef = useRef<string | null>(null);
+    const isWorkspaceActionPending = workspaceActionPendingCount > 0;
 
     const viewerUserId = data?.viewerUserId || "unknown";
     const trackMyTeamAction = (actionKey: string, context?: Record<string, unknown>) => {
@@ -743,6 +830,8 @@ export default function WorkspacePage() {
             ...context,
         });
     };
+
+    const isStorageKeyReady = (key: string) => Boolean(key) && !key.includes(".unknown");
     const modeStorageKey = useMemo(() => `onbure.workspace.mode.${teamId || "unknown"}`, [teamId]);
     const sidebarStorageKey = useMemo(() => `onbure.workspace.sidebar.${teamId || "unknown"}`, [teamId]);
     const teamLayoutStorageKey = useMemo(() => `onbure.workspace.fileLayout.${teamId || "unknown"}`, [teamId]);
@@ -771,6 +860,16 @@ export default function WorkspacePage() {
     );
     const activeAnnotationsStorageKey =
         workspaceMode === "my" ? myAnnotationsStorageKey : teamAnnotationsStorageKey;
+    const teamItemCommentsStorageKey = useMemo(
+        () => `onbure.workspace.itemComments.${teamId || "unknown"}`,
+        [teamId]
+    );
+    const myItemCommentsStorageKey = useMemo(
+        () => `onbure.workspace.my.itemComments.${teamId || "unknown"}.${viewerUserId}`,
+        [teamId, viewerUserId]
+    );
+    const activeItemCommentsStorageKey =
+        workspaceMode === "my" ? myItemCommentsStorageKey : teamItemCommentsStorageKey;
     const teamActiveAnnotationStorageKey = useMemo(
         () => `onbure.workspace.activeAnnotation.${teamId || "unknown"}`,
         [teamId]
@@ -785,7 +884,21 @@ export default function WorkspacePage() {
         () => `onbure.workspace.my.groups.${teamId || "unknown"}.${viewerUserId}`,
         [teamId, viewerUserId]
     );
+    const teamGroupsStorageKey = useMemo(
+        () => `onbure.workspace.groups.${teamId || "unknown"}`,
+        [teamId]
+    );
     const activeGroupsStorageKey = myGroupsStorageKey;
+    const teamMemberOwnersStorageKey = useMemo(
+        () => `onbure.workspace.memberOwners.${teamId || "unknown"}`,
+        [teamId]
+    );
+    const myMemberOwnersStorageKey = useMemo(
+        () => `onbure.workspace.my.memberOwners.${teamId || "unknown"}.${viewerUserId}`,
+        [teamId, viewerUserId]
+    );
+    const activeMemberOwnersStorageKey =
+        workspaceMode === "my" ? myMemberOwnersStorageKey : teamMemberOwnersStorageKey;
     const teamHiddenCanvasGroupsStorageKey = useMemo(
         () => `onbure.workspace.hiddenCanvasGroups.${teamId || "unknown"}`,
         [teamId]
@@ -807,8 +920,17 @@ export default function WorkspacePage() {
     const activeHiddenCanvasItemsStorageKey =
         workspaceMode === "my" ? myHiddenCanvasItemsStorageKey : teamHiddenCanvasItemsStorageKey;
     const annotationKindForMode: WorkspaceAnnotationKind = workspaceMode === "my" ? "memo" : "comment";
-    const annotationActionLabel = workspaceMode === "my" ? "Create Memo" : "Create Comment";
-    const sidebarFileScope = "my";
+    const annotationActionLabel =
+        workspaceMode === "my" ? t("workspace.annotation.createMemo") : t("workspace.annotation.createComment");
+    const groupHintTooltipText = t("workspace.groupHintTooltip");
+    const getRoleLabel = (role: WorkspaceMember["role"]) => {
+        if (role === "Owner") return t("team.role.owner");
+        if (role === "Admin") return t("team.role.admin");
+        return t("team.role.member");
+    };
+    const folderLabel = t("workspace.folder");
+    const getFolderLabel = (title: string) => getFolderDisplayName(title, folderLabel);
+    const sidebarFileScope: WorkspaceMode = "my";
 
     const fetchData = React.useCallback(async (options?: { silent?: boolean }) => {
         if (!teamId) return;
@@ -822,12 +944,12 @@ export default function WorkspacePage() {
         try {
             const res = await fetch(`/api/workspace/${teamId}`);
             if (res.status === 403) {
-                setError("Access denied. You are not a member of this team.");
+                setError(t("workspace.error.accessDenied"));
                 if (!silent) setLoading(false);
                 return;
             }
             if (!res.ok) {
-                setError("Failed to load workspace data.");
+                setError(t("workspace.error.loadFailed"));
                 if (!silent) setLoading(false);
                 return;
             }
@@ -835,13 +957,13 @@ export default function WorkspacePage() {
             setData(payload);
             setError("");
         } catch {
-            setError("Failed to load workspace data.");
+            setError(t("workspace.error.loadFailed"));
         } finally {
             if (!silent) {
                 setLoading(false);
             }
         }
-    }, [teamId]);
+    }, [teamId, t]);
 
     useEffect(() => {
         void fetchData();
@@ -1025,12 +1147,12 @@ export default function WorkspacePage() {
             setFileShareDrag((prev) =>
                 prev
                     ? {
-                          ...prev,
-                          currentX: event.clientX,
-                          currentY: event.clientY,
-                          hoverUserId: drop.userId,
-                          hoverUsername: drop.username,
-                      }
+                        ...prev,
+                        currentX: event.clientX,
+                        currentY: event.clientY,
+                        hoverUserId: drop.userId,
+                        hoverUsername: drop.username,
+                    }
                     : prev
             );
         };
@@ -1051,7 +1173,7 @@ export default function WorkspacePage() {
                     setFileShareConfirm({
                         open: true,
                         fileId: targetFile.id,
-                        fileName: String(targetFile.title || "").trim() || "Untitled",
+                        fileName: String(targetFile.title || "").trim() || t("workspace.untitled"),
                         toUserId: drop.userId,
                         toUsername: targetMember.username || targetMember.userId,
                         isSubmitting: false,
@@ -1074,7 +1196,7 @@ export default function WorkspacePage() {
             window.removeEventListener("pointerup", handlePointerUp);
             window.removeEventListener("pointercancel", handlePointerCancel);
         };
-    }, [fileShareDrag, data?.files, data?.myFiles, data?.members, workspaceMode, data?.viewerUserId]);
+    }, [fileShareDrag, data?.files, data?.myFiles, data?.members, workspaceMode, data?.viewerUserId, t]);
 
     useEffect(() => {
         if (!workspaceCanvasMenu) return;
@@ -1293,6 +1415,18 @@ export default function WorkspacePage() {
     }, [editingAnnotationTitleId]);
 
     useEffect(() => {
+        if (!activeItemCommentKey) return;
+        const id = window.setTimeout(() => {
+            itemCommentInputRef.current?.focus();
+            itemCommentInputRef.current?.setSelectionRange(
+                itemCommentInputRef.current.value.length,
+                itemCommentInputRef.current.value.length
+            );
+        }, 0);
+        return () => window.clearTimeout(id);
+    }, [activeItemCommentKey]);
+
+    useEffect(() => {
         if (typeof window === "undefined") return;
         const saved = String(window.localStorage.getItem(activeAnnotationStorageKey) || "").trim();
         setActiveAnnotationId(saved || null);
@@ -1338,6 +1472,24 @@ export default function WorkspacePage() {
 
     useEffect(() => {
         if (typeof window === "undefined") return;
+        if (!isStorageKeyReady(activeMemberOwnersStorageKey)) return;
+        const saved = parseSavedStringRecord(window.localStorage.getItem(activeMemberOwnersStorageKey));
+        memberOwnersLoadedKeyRef.current = activeMemberOwnersStorageKey;
+        setMemberOwnersHydratedStorageKey(null);
+        setCanvasMemberPlacementOwners(saved);
+        setMemberOwnersHydratedStorageKey(activeMemberOwnersStorageKey);
+    }, [activeMemberOwnersStorageKey]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        if (!isStorageKeyReady(activeMemberOwnersStorageKey)) return;
+        if (memberOwnersLoadedKeyRef.current !== activeMemberOwnersStorageKey) return;
+        if (memberOwnersHydratedStorageKey !== activeMemberOwnersStorageKey) return;
+        window.localStorage.setItem(activeMemberOwnersStorageKey, JSON.stringify(canvasMemberPlacementOwners));
+    }, [canvasMemberPlacementOwners, activeMemberOwnersStorageKey, memberOwnersHydratedStorageKey]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
         const saved = parseSavedAnnotations(window.localStorage.getItem(activeAnnotationsStorageKey));
         setAnnotations(saved);
         annotationLoadedKeyRef.current = activeAnnotationsStorageKey;
@@ -1351,43 +1503,138 @@ export default function WorkspacePage() {
 
     useEffect(() => {
         if (typeof window === "undefined") return;
-        const saved = parseSavedGroups(window.localStorage.getItem(activeGroupsStorageKey));
+        if (!isStorageKeyReady(activeItemCommentsStorageKey)) return;
+        const saved = parseSavedItemComments(window.localStorage.getItem(activeItemCommentsStorageKey));
+        setItemComments(saved);
+        itemCommentsLoadedKeyRef.current = activeItemCommentsStorageKey;
+    }, [activeItemCommentsStorageKey]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        if (!isStorageKeyReady(activeItemCommentsStorageKey)) return;
+        if (itemCommentsLoadedKeyRef.current !== activeItemCommentsStorageKey) return;
+        window.localStorage.setItem(activeItemCommentsStorageKey, JSON.stringify(itemComments));
+    }, [itemComments, activeItemCommentsStorageKey]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        if (!isStorageKeyReady(activeGroupsStorageKey)) return;
+        const activeRawGroups = window.localStorage.getItem(activeGroupsStorageKey);
+        let saved = parseSavedGroups(activeRawGroups);
+        // Only migrate legacy keys when the active key is truly missing.
+        // If active key exists as [], respect that (user intentionally removed groups).
+        if (activeRawGroups === null && saved.length === 0) {
+            const fallbackStorageKeys = [teamGroupsStorageKey, myGroupsStorageKey];
+            for (const fallbackStorageKey of fallbackStorageKeys) {
+                if (
+                    !fallbackStorageKey ||
+                    fallbackStorageKey === activeGroupsStorageKey ||
+                    !isStorageKeyReady(fallbackStorageKey)
+                ) {
+                    continue;
+                }
+
+                const fallbackSaved = parseSavedGroups(window.localStorage.getItem(fallbackStorageKey));
+                if (fallbackSaved.length > 0) {
+                    saved = fallbackSaved;
+                    // Migrate legacy groups so sidebar/canvas keeps a single active source.
+                    window.localStorage.setItem(activeGroupsStorageKey, JSON.stringify(fallbackSaved));
+                    break;
+                }
+            }
+        }
+        groupsLoadedKeyRef.current = activeGroupsStorageKey;
+        setGroupsHydratedStorageKey(null);
         setWorkspaceGroups(saved);
-    }, [activeGroupsStorageKey]);
+        setGroupsHydratedStorageKey(activeGroupsStorageKey);
+    }, [activeGroupsStorageKey, myGroupsStorageKey, teamGroupsStorageKey]);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
+        if (!isStorageKeyReady(activeGroupsStorageKey)) return;
+        if (groupsLoadedKeyRef.current !== activeGroupsStorageKey) return;
+        if (groupsHydratedStorageKey !== activeGroupsStorageKey) return;
         window.localStorage.setItem(activeGroupsStorageKey, JSON.stringify(workspaceGroups));
-    }, [workspaceGroups, activeGroupsStorageKey]);
+    }, [workspaceGroups, activeGroupsStorageKey, groupsHydratedStorageKey]);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
+        if (!isStorageKeyReady(activeHiddenCanvasGroupsStorageKey)) return;
         const saved = parseSavedStringArray(window.localStorage.getItem(activeHiddenCanvasGroupsStorageKey));
+        hiddenGroupsLoadedKeyRef.current = activeHiddenCanvasGroupsStorageKey;
+        setHiddenGroupsHydratedStorageKey(null);
         setHiddenCanvasGroupIds(saved);
+        setHiddenGroupsHydratedStorageKey(activeHiddenCanvasGroupsStorageKey);
     }, [activeHiddenCanvasGroupsStorageKey]);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
+        if (!isStorageKeyReady(activeHiddenCanvasGroupsStorageKey)) return;
+        if (hiddenGroupsLoadedKeyRef.current !== activeHiddenCanvasGroupsStorageKey) return;
+        if (hiddenGroupsHydratedStorageKey !== activeHiddenCanvasGroupsStorageKey) return;
         window.localStorage.setItem(activeHiddenCanvasGroupsStorageKey, JSON.stringify(hiddenCanvasGroupIds));
-    }, [hiddenCanvasGroupIds, activeHiddenCanvasGroupsStorageKey]);
+    }, [hiddenCanvasGroupIds, activeHiddenCanvasGroupsStorageKey, hiddenGroupsHydratedStorageKey]);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
+        if (!isStorageKeyReady(activeHiddenCanvasItemsStorageKey)) return;
         const saved = parseSavedStringArray(window.localStorage.getItem(activeHiddenCanvasItemsStorageKey));
+        hiddenItemsLoadedKeyRef.current = activeHiddenCanvasItemsStorageKey;
+        setHiddenItemsHydratedStorageKey(null);
         setHiddenCanvasItemKeys(saved);
+        setHiddenItemsHydratedStorageKey(activeHiddenCanvasItemsStorageKey);
     }, [activeHiddenCanvasItemsStorageKey]);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
+        if (!isStorageKeyReady(activeHiddenCanvasItemsStorageKey)) return;
+        if (hiddenItemsLoadedKeyRef.current !== activeHiddenCanvasItemsStorageKey) return;
+        if (hiddenItemsHydratedStorageKey !== activeHiddenCanvasItemsStorageKey) return;
         window.localStorage.setItem(activeHiddenCanvasItemsStorageKey, JSON.stringify(hiddenCanvasItemKeys));
-    }, [hiddenCanvasItemKeys, activeHiddenCanvasItemsStorageKey]);
+    }, [hiddenCanvasItemKeys, activeHiddenCanvasItemsStorageKey, hiddenItemsHydratedStorageKey]);
 
     const currentFiles = useMemo(() => data?.myFiles || [], [data?.myFiles]);
     const modeCanvasFiles = useMemo(
         () => (workspaceMode === "my" ? data?.myFiles || [] : data?.files || []),
         [workspaceMode, data?.myFiles, data?.files]
     );
+    const canvasAvailableFiles = useMemo(() => {
+        if (workspaceMode === "my") return modeCanvasFiles;
+        const merged = new Map<string, WorkspaceFile>();
+        for (const file of modeCanvasFiles) {
+            merged.set(file.id, file);
+        }
+        for (const file of currentFiles) {
+            if (!merged.has(file.id)) {
+                merged.set(file.id, file);
+            }
+        }
+        return Array.from(merged.values());
+    }, [workspaceMode, modeCanvasFiles, currentFiles]);
+    const canvasFileByIdMap = useMemo(
+        () => new Map(canvasAvailableFiles.map((file) => [file.id, file])),
+        [canvasAvailableFiles]
+    );
+    const teamFileByIdMap = useMemo(
+        () => new Map((data?.files || []).map((file) => [file.id, file])),
+        [data?.files]
+    );
     const members = useMemo(() => (Array.isArray(data?.members) ? data.members : []), [data?.members]);
+    const itemCommentsByKey = useMemo(() => {
+        const next = new Map<string, WorkspaceItemComment[]>();
+        for (const comment of itemComments) {
+            const itemKey = String(comment.itemKey || "").trim();
+            if (!parseCanvasItemKey(itemKey)) continue;
+            if (!next.has(itemKey)) {
+                next.set(itemKey, []);
+            }
+            next.get(itemKey)?.push(comment);
+        }
+        for (const comments of next.values()) {
+            comments.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        }
+        return next;
+    }, [itemComments]);
     const annotationsForCurrentMode = useMemo(
         () => annotations.filter((annotation) => annotation.kind === annotationKindForMode),
         [annotations, annotationKindForMode]
@@ -1409,7 +1656,7 @@ export default function WorkspacePage() {
 
         for (const [filePlacementId, position] of Object.entries(canvasFilePositions)) {
             const fileId = extractCanvasPlacementSourceId(filePlacementId);
-            const file = modeCanvasFiles.find((item) => item.id === fileId);
+            const file = canvasFileByIdMap.get(fileId);
             if (!file) continue;
             next.push({
                 key: buildCanvasItemKey("file", filePlacementId),
@@ -1460,7 +1707,7 @@ export default function WorkspacePage() {
                 key: buildCanvasItemKey("annotation", annotation.id),
                 kind: "annotation",
                 id: annotation.id,
-                label: annotation.title || getDefaultAnnotationTitle(annotation.kind),
+                label: annotation.title || getDefaultAnnotationTitle(annotation.kind, t),
                 bounds: {
                     x: annotation.x,
                     y: annotation.y,
@@ -1473,11 +1720,12 @@ export default function WorkspacePage() {
         return next;
     }, [
         canvasFilePositions,
-        modeCanvasFiles,
+        canvasFileByIdMap,
         canvasMemberPositions,
         members,
         annotationsForCurrentMode,
         activeAnnotationId,
+        t,
     ]);
     const selectableCanvasItems = useMemo(
         () => allCanvasSelectableItems.filter((item) => !hiddenCanvasItemKeySet.has(item.key)),
@@ -1487,6 +1735,28 @@ export default function WorkspacePage() {
         () => new Map(selectableCanvasItems.map((item) => [item.key, item])),
         [selectableCanvasItems]
     );
+    useEffect(() => {
+        if (!activeItemCommentKey) return;
+        const canAddCommentFromAnnotations = (itemKey: string) => {
+            const normalizedKey = String(itemKey || "").trim();
+            const parsed = parseCanvasItemKey(normalizedKey);
+            if (!parsed) return false;
+            if (parsed.kind !== "annotation") return true;
+            const annotationId = extractCanvasPlacementSourceId(parsed.id);
+            const targetAnnotation = annotations.find(
+                (item) => item.id === parsed.id || item.id === annotationId
+            );
+            return Boolean(targetAnnotation && targetAnnotation.kind !== "comment");
+        };
+        if (
+            selectableCanvasItemMap.has(activeItemCommentKey) &&
+            canAddCommentFromAnnotations(activeItemCommentKey)
+        ) {
+            return;
+        }
+        setActiveItemCommentKey(null);
+        setItemCommentDraft("");
+    }, [activeItemCommentKey, selectableCanvasItemMap, annotations]);
     const selectedCanvasItemKeySet = useMemo(
         () => new Set(selectedCanvasItemKeys),
         [selectedCanvasItemKeys]
@@ -1503,6 +1773,70 @@ export default function WorkspacePage() {
         () => new Set(workspaceGroups.flatMap((group) => group.itemKeys)),
         [workspaceGroups]
     );
+    const canViewerRemoveFileFromWorkspace = React.useCallback(
+        (filePlacementOrSourceId: string) => {
+            const normalized = String(filePlacementOrSourceId || "").trim();
+            if (!normalized) return false;
+            const sourceFileId = extractCanvasPlacementSourceId(normalized);
+            if (!sourceFileId) return false;
+            if (workspaceMode !== "team") return true;
+
+            const viewerUserIdForCheck = String(data?.viewerUserId || "").trim();
+            const viewerMember = members.find((m) => String(m.userId || "").trim() === viewerUserIdForCheck);
+            if (viewerMember?.role === "Owner" || viewerMember?.role === "Admin") return true;
+
+            // Restrict team-canvas file removal to the original uploader.
+            const teamFile = teamFileByIdMap.get(sourceFileId);
+            if (!teamFile) return true;
+            const ownerUserId = String(teamFile.ownerUserId || "").trim();
+            return Boolean(ownerUserId && viewerUserIdForCheck && ownerUserId === viewerUserIdForCheck);
+        },
+        [workspaceMode, teamFileByIdMap, data?.viewerUserId, members]
+    );
+    const canViewerModifyMemberPlacement = React.useCallback(
+        (memberPlacementOrSourceId: string) => {
+            const normalized = String(memberPlacementOrSourceId || "").trim();
+            if (!normalized) return false;
+            if (workspaceMode !== "team") return true;
+
+            const viewerUserIdForCheck = String(data?.viewerUserId || "").trim();
+            if (!viewerUserIdForCheck) return false;
+
+            const viewerMember = members.find((m) => String(m.userId || "").trim() === viewerUserIdForCheck);
+            if (viewerMember?.role === "Owner" || viewerMember?.role === "Admin") return true;
+
+            const directOwnerUserId = String(canvasMemberPlacementOwners[normalized] || "").trim();
+            if (directOwnerUserId) {
+                return directOwnerUserId === viewerUserIdForCheck;
+            }
+
+            const sourceMemberId = extractCanvasPlacementSourceId(normalized);
+            const matchedOwnerUserIds = Object.entries(canvasMemberPlacementOwners)
+                .filter(([placementId]) => extractCanvasPlacementSourceId(placementId) === sourceMemberId)
+                .map(([, ownerUserId]) => String(ownerUserId || "").trim())
+                .filter(Boolean);
+            if (matchedOwnerUserIds.length > 0) {
+                return matchedOwnerUserIds.every((ownerUserId) => ownerUserId === viewerUserIdForCheck);
+            }
+
+            // Legacy fallback for placements created before owner metadata existed.
+            const sourceMember = members.find((member) => member.id === sourceMemberId);
+            const sourceMemberUserId = String(sourceMember?.userId || "").trim();
+            return Boolean(sourceMemberUserId && sourceMemberUserId === viewerUserIdForCheck);
+        },
+        [workspaceMode, data?.viewerUserId, canvasMemberPlacementOwners, members]
+    );
+    const canViewerMoveCanvasItem = React.useCallback(
+        (itemKey: string) => {
+            const parsed = parseCanvasItemKey(itemKey);
+            if (!parsed) return false;
+            if (parsed.kind === "file") return canViewerRemoveFileFromWorkspace(parsed.id);
+            if (parsed.kind === "member") return canViewerModifyMemberPlacement(parsed.id);
+            return true;
+        },
+        [canViewerRemoveFileFromWorkspace, canViewerModifyMemberPlacement]
+    );
+
     const resolvedWorkspaceGroups = useMemo(
         () =>
             workspaceGroups
@@ -1518,11 +1852,11 @@ export default function WorkspacePage() {
 
                             if (parsed.kind === "file") {
                                 const sourceFileId = extractCanvasPlacementSourceId(parsed.id);
-                                const file = currentFiles.find((item) => item.id === sourceFileId);
+                                const file = canvasFileByIdMap.get(sourceFileId);
                                 if (!file) return null;
                                 const label = isFolderEntry(file)
-                                    ? getFolderDisplayName(file.title)
-                                    : file.title || "Untitled";
+                                    ? getFolderDisplayName(file.title, folderLabel)
+                                    : file.title || t("workspace.untitled");
                                 return {
                                     key: itemKey,
                                     kind: "file" as const,
@@ -1573,7 +1907,7 @@ export default function WorkspacePage() {
                                     key: itemKey,
                                     kind: "annotation" as const,
                                     id: annotation.id,
-                                    label: annotation.title || getDefaultAnnotationTitle(annotation.kind),
+                                    label: annotation.title || getDefaultAnnotationTitle(annotation.kind, t),
                                     bounds: {
                                         x: annotation.x,
                                         y: annotation.y,
@@ -1590,10 +1924,12 @@ export default function WorkspacePage() {
         [
             workspaceGroups,
             selectableCanvasItemMap,
-            currentFiles,
+            canvasFileByIdMap,
             members,
             annotationsForSidebarGroups,
             activeAnnotationId,
+            folderLabel,
+            t,
         ]
     );
     const canvasGroupOutlines = useMemo(() => {
@@ -1627,7 +1963,7 @@ export default function WorkspacePage() {
 
                 return {
                     id: group.id,
-                    name: String(group.name || "").trim() || "Group",
+                    name: String(group.name || "").trim() || t("workspace.group"),
                     left,
                     top,
                     width: Math.max(48, right - left),
@@ -1635,14 +1971,14 @@ export default function WorkspacePage() {
                 };
             })
             .filter(Boolean) as Array<{
-            id: string;
-            name: string;
-            left: number;
-            top: number;
-            width: number;
-            height: number;
-        }>;
-    }, [resolvedWorkspaceGroups, hiddenCanvasGroupIdSet, selectableCanvasItemMap]);
+                id: string;
+                name: string;
+                left: number;
+                top: number;
+                width: number;
+                height: number;
+            }>;
+    }, [resolvedWorkspaceGroups, hiddenCanvasGroupIdSet, selectableCanvasItemMap, t]);
     const resolvedSidebarGroupItemKeys = useMemo(
         () => resolvedWorkspaceGroups.flatMap((group) => group.items.map((item) => item.key)),
         [resolvedWorkspaceGroups]
@@ -1680,12 +2016,12 @@ export default function WorkspacePage() {
         [currentFiles, validFolderIds]
     );
     const canvasFolderIds = useMemo(
-        () => new Set(modeCanvasFiles.filter((file) => isFolderEntry(file)).map((file) => file.id)),
-        [modeCanvasFiles]
+        () => new Set(canvasAvailableFiles.filter((file) => isFolderEntry(file)).map((file) => file.id)),
+        [canvasAvailableFiles]
     );
     const canvasFilesByFolder = useMemo(() => {
         const grouped: Record<string, WorkspaceFile[]> = {};
-        for (const file of modeCanvasFiles) {
+        for (const file of canvasAvailableFiles) {
             if (isFolderEntry(file)) continue;
             const targetFolderId = String(file.folderId || "").trim();
             if (!targetFolderId || !canvasFolderIds.has(targetFolderId)) continue;
@@ -1693,10 +2029,14 @@ export default function WorkspacePage() {
             grouped[targetFolderId].push(file);
         }
         return grouped;
-    }, [modeCanvasFiles, canvasFolderIds]);
+    }, [canvasAvailableFiles, canvasFolderIds]);
 
     useEffect(() => {
-        const validFileIds = new Set(modeCanvasFiles.map((file) => file.id));
+        if (loading) return;
+        if (!data) return;
+        if (fileLayoutLoadedKeyRef.current !== activeFileLayoutStorageKey) return;
+
+        const validFileIds = new Set(canvasAvailableFiles.map((file) => file.id));
 
         setCanvasFilePositions((prev) => {
             let changed = false;
@@ -1711,7 +2051,7 @@ export default function WorkspacePage() {
             }
             return changed ? next : prev;
         });
-    }, [modeCanvasFiles]);
+    }, [canvasAvailableFiles, loading, data, activeFileLayoutStorageKey]);
 
     useEffect(() => {
         const validFileIds = new Set(currentFiles.map((file) => file.id));
@@ -1784,7 +2124,7 @@ export default function WorkspacePage() {
         for (const group of resolvedWorkspaceGroups) {
             for (const item of group.items) {
                 if (item.kind !== "file") continue;
-                const targetFile = fileByIdMap.get(item.id);
+                const targetFile = canvasFileByIdMap.get(item.id) || fileByIdMap.get(item.id);
                 if (!targetFile || !isFolderEntry(targetFile)) continue;
                 validKeys.add(`${group.id}:${item.key}`);
             }
@@ -1802,7 +2142,7 @@ export default function WorkspacePage() {
             }
             return changed ? next : prev;
         });
-    }, [resolvedWorkspaceGroups, fileByIdMap]);
+    }, [resolvedWorkspaceGroups, canvasFileByIdMap, fileByIdMap]);
 
     useEffect(() => {
         const validItemKeys = new Set(selectableCanvasItems.map((item) => item.key));
@@ -1831,20 +2171,45 @@ export default function WorkspacePage() {
     }, [workspaceGroups]);
 
     useEffect(() => {
+        if (!isStorageKeyReady(activeGroupsStorageKey)) return;
+        if (groupsLoadedKeyRef.current !== activeGroupsStorageKey) return;
+        if (groupsHydratedStorageKey !== activeGroupsStorageKey) return;
+        if (hiddenGroupsHydratedStorageKey !== activeHiddenCanvasGroupsStorageKey) return;
         const validGroupIds = new Set(workspaceGroups.map((group) => group.id));
         setHiddenCanvasGroupIds((prev) => {
             const next = prev.filter((groupId) => validGroupIds.has(groupId));
             return next.length === prev.length ? prev : next;
         });
-    }, [workspaceGroups]);
+    }, [
+        workspaceGroups,
+        activeGroupsStorageKey,
+        activeHiddenCanvasGroupsStorageKey,
+        groupsHydratedStorageKey,
+        hiddenGroupsHydratedStorageKey,
+    ]);
 
     useEffect(() => {
+        if (!isStorageKeyReady(activeHiddenCanvasItemsStorageKey)) return;
+        if (hiddenItemsLoadedKeyRef.current !== activeHiddenCanvasItemsStorageKey) return;
+        if (hiddenItemsHydratedStorageKey !== activeHiddenCanvasItemsStorageKey) return;
+        if (loading) return;
+
         const aliveItemKeys = new Set(allCanvasSelectableItems.map((item) => item.key));
+        // Keep source file keys alive so "remove from workspace" survives until the file set changes.
+        for (const file of canvasAvailableFiles) {
+            aliveItemKeys.add(buildCanvasItemKey("file", file.id));
+        }
         setHiddenCanvasItemKeys((prev) => {
             const next = prev.filter((itemKey) => aliveItemKeys.has(itemKey));
             return next.length === prev.length ? prev : next;
         });
-    }, [allCanvasSelectableItems]);
+    }, [
+        allCanvasSelectableItems,
+        canvasAvailableFiles,
+        activeHiddenCanvasItemsStorageKey,
+        hiddenItemsHydratedStorageKey,
+        loading,
+    ]);
 
     useEffect(() => {
         setSelectedCanvasItemKeys((prev) => {
@@ -1868,6 +2233,10 @@ export default function WorkspacePage() {
     }, [groupInlineRename, workspaceGroups]);
 
     useEffect(() => {
+        if (loading) return;
+        if (!data) return;
+        if (memberLayoutLoadedKeyRef.current !== activeMemberLayoutStorageKey) return;
+
         const members = Array.isArray(data?.members) ? data.members : [];
         const validMemberIds = new Set(members.map((member) => member.id));
         setCanvasMemberPositions((prev) => {
@@ -1883,7 +2252,23 @@ export default function WorkspacePage() {
             }
             return changed ? next : prev;
         });
-    }, [data?.members]);
+    }, [data, data?.members, loading, activeMemberLayoutStorageKey]);
+
+    useEffect(() => {
+        const validPlacementIds = new Set(Object.keys(canvasMemberPositions));
+        setCanvasMemberPlacementOwners((prev) => {
+            let changed = false;
+            const next: Record<string, string> = {};
+            for (const [placementId, ownerUserId] of Object.entries(prev)) {
+                if (!validPlacementIds.has(placementId)) {
+                    changed = true;
+                    continue;
+                }
+                next[placementId] = ownerUserId;
+            }
+            return changed ? next : prev;
+        });
+    }, [canvasMemberPositions]);
 
     useEffect(() => {
         if (!movingFile && !movingMember && !movingAnnotation && !movingSelection && !resizingAnnotation) return;
@@ -1944,8 +2329,8 @@ export default function WorkspacePage() {
                     firstItem ? (allSameKind ? firstItem.kind : "mixed") : "mixed";
                 const label =
                     normalizedActiveDragKeys.length === 1
-                        ? (firstItem?.label || "Item")
-                        : `${normalizedActiveDragKeys.length} items`;
+                        ? (firstItem?.label || t("workspace.item"))
+                        : t("workspace.items", { count: normalizedActiveDragKeys.length });
                 const nextPreview: GroupDragPreviewState = {
                     x: event.clientX + 14,
                     y: event.clientY + 16,
@@ -2149,9 +2534,9 @@ export default function WorkspacePage() {
         const handlePointerUp = (event: PointerEvent) => {
             const dropTargetGroupId =
                 isSidebarOpen &&
-                activeSection === "groups" &&
-                event.ctrlKey &&
-                hoveredGroupId
+                    activeSection === "groups" &&
+                    event.ctrlKey &&
+                    hoveredGroupId
                     ? hoveredGroupId
                     : null;
             if (dropTargetGroupId) {
@@ -2210,7 +2595,7 @@ export default function WorkspacePage() {
             window.removeEventListener("pointermove", handlePointerMove);
             window.removeEventListener("pointerup", handlePointerUp);
         };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
         movingFile,
         movingMember,
@@ -2340,7 +2725,11 @@ export default function WorkspacePage() {
         };
     }, [sidebarSelection]);
 
-    const createWorkspaceFileRecord = async (title: string, url = "") => {
+    const createWorkspaceFileRecord = async (
+        title: string,
+        url = "",
+        scope: WorkspaceMode = sidebarFileScope
+    ) => {
         if (!teamId) return null;
 
         const normalizedTitle = String(title || "").trim().replace(/\s+/g, " ").slice(0, 120);
@@ -2353,7 +2742,7 @@ export default function WorkspacePage() {
                 type: "FILE",
                 title: normalizedTitle,
                 url: String(url || ""),
-                scope: sidebarFileScope,
+                scope,
             }),
         });
         if (!res.ok) return null;
@@ -2363,6 +2752,75 @@ export default function WorkspacePage() {
         } catch {
             return null;
         }
+    };
+
+    const normalizeFileIdentityTitle = (value: string | undefined) =>
+        String(value || "").trim().replace(/\s+/g, " ").slice(0, 120);
+    const normalizeFileIdentityUrl = (value: string | undefined) => String(value || "").trim();
+
+    const shareMyFileToTeamWorkspace = async (sourceFileId: string) => {
+        if (!teamId) return null;
+        const normalizedSourceFileId = String(sourceFileId || "").trim();
+        if (!normalizedSourceFileId) return null;
+
+        const res = await fetch(`/api/workspace/${teamId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                type: "FILE_SHARE_TO_TEAM",
+                id: normalizedSourceFileId,
+            }),
+        });
+        if (!res.ok) return null;
+        try {
+            const payload = await res.json();
+            return typeof payload?.id === "string" ? payload.id : null;
+        } catch {
+            return null;
+        }
+    };
+
+    const ensureTeamCanvasFileFromSource = async (source: WorkspaceFile) => {
+        const sharedTeamFileId = await shareMyFileToTeamWorkspace(source.id);
+        if (!sharedTeamFileId) return null;
+
+        const existingTeamFile = (data?.files || []).find((file) => file.id === sharedTeamFileId);
+        if (existingTeamFile) return existingTeamFile;
+
+        const created: WorkspaceFile = {
+            id: sharedTeamFileId,
+            title: normalizeFileIdentityTitle(source.title),
+            url: normalizeFileIdentityUrl(source.url),
+            ownerUserId: data?.viewerUserId,
+            createdAt: new Date().toISOString(),
+        };
+
+        setData((prev) => {
+            if (!prev) return prev;
+            if ((prev.files || []).some((file) => file.id === sharedTeamFileId)) return prev;
+            return {
+                ...prev,
+                files: [...(prev.files || []), created],
+            };
+        });
+
+        return created;
+    };
+
+    const resolveCanvasDropFile = async (fileId: string): Promise<WorkspaceFile | null> => {
+        const normalizedFileId = String(fileId || "").trim();
+        if (!normalizedFileId) return null;
+
+        if (workspaceMode !== "team") {
+            return currentFiles.find((file) => file.id === normalizedFileId) || null;
+        }
+
+        const existingTeamFile = (data?.files || []).find((file) => file.id === normalizedFileId);
+        if (existingTeamFile) return existingTeamFile;
+
+        const source = currentFiles.find((file) => file.id === normalizedFileId);
+        if (!source) return null;
+        return ensureTeamCanvasFileFromSource(source);
     };
 
     const uploadWorkspaceFileRecord = async (file: File, folderId?: string) => {
@@ -2411,8 +2869,8 @@ export default function WorkspacePage() {
         if (isFolder) {
             setNotice({
                 open: true,
-                title: "Folder",
-                message: "Folders cannot be opened directly.",
+                title: t("workspace.folder"),
+                message: t("workspace.folderCannotOpen"),
             });
             return;
         }
@@ -2421,8 +2879,8 @@ export default function WorkspacePage() {
         if (!url) {
             setNotice({
                 open: true,
-                title: "Open unavailable",
-                message: "This file has no openable source. Re-import the file to open it.",
+                title: t("workspace.openUnavailableTitle"),
+                message: t("workspace.openUnavailableNoSource"),
             });
             return;
         }
@@ -2437,8 +2895,8 @@ export default function WorkspacePage() {
             if (!opened) {
                 setNotice({
                     open: true,
-                    title: "Popup blocked",
-                    message: "Please allow pop-ups in your browser and try again.",
+                    title: t("workspace.popupBlockedTitle"),
+                    message: t("workspace.popupBlockedMessage"),
                 });
             }
             return;
@@ -2446,8 +2904,8 @@ export default function WorkspacePage() {
 
         setNotice({
             open: true,
-            title: "Open unavailable",
-            message: "Unsupported file URL format.",
+            title: t("workspace.openUnavailableTitle"),
+            message: t("workspace.openUnavailableUnsupported"),
         });
     };
 
@@ -2497,7 +2955,7 @@ export default function WorkspacePage() {
         if (createEntryModal.isSubmitting) return;
         const trimmedName = createEntryModal.name.trim().replace(/\s+/g, " ");
         if (!trimmedName) {
-            setCreateEntryModal((prev) => ({ ...prev, error: "Name is required." }));
+            setCreateEntryModal((prev) => ({ ...prev, error: t("workspace.error.nameRequired") }));
             return;
         }
 
@@ -2511,7 +2969,7 @@ export default function WorkspacePage() {
                 setCreateEntryModal((prev) => ({
                     ...prev,
                     isSubmitting: false,
-                    error: "Unable to create item.",
+                    error: t("workspace.error.createItem"),
                 }));
                 return;
             }
@@ -2522,7 +2980,7 @@ export default function WorkspacePage() {
                     setCreateEntryModal((prev) => ({
                         ...prev,
                         isSubmitting: false,
-                        error: "Folder created, but file move failed.",
+                        error: t("workspace.error.createFolderMoveFailed"),
                     }));
                     return;
                 }
@@ -2541,7 +2999,7 @@ export default function WorkspacePage() {
             setCreateEntryModal((prev) => ({
                 ...prev,
                 isSubmitting: false,
-                error: "Unable to create item.",
+                error: t("workspace.error.createItem"),
             }));
         }
     };
@@ -2563,42 +3021,50 @@ export default function WorkspacePage() {
         event.target.value = "";
         if (!files.length) return;
 
-        let successCount = 0;
-        let failedCount = 0;
-        const limitedFiles = files.slice(0, 30);
-        for (const file of limitedFiles) {
-            const ok = await uploadWorkspaceFileRecord(file);
-            if (ok) successCount += 1;
-            else failedCount += 1;
-        }
+        setWorkspaceActionPendingCount((prev) => prev + 1);
+        try {
+            let successCount = 0;
+            let failedCount = 0;
+            const limitedFiles = files.slice(0, 30);
+            for (const file of limitedFiles) {
+                const ok = await uploadWorkspaceFileRecord(file);
+                if (ok) successCount += 1;
+                else failedCount += 1;
+            }
 
-        if (successCount > 0) {
-            void fetchData({ silent: true });
-            setNotice({
-                open: true,
-                title: "Import completed",
-                message:
-                    failedCount > 0
-                        ? `Imported ${successCount} file(s). ${failedCount} file(s) failed.`
-                        : `Imported ${successCount} file(s).`,
-            });
-        }
+            if (successCount > 0) {
+                void fetchData({ silent: true });
+                setNotice({
+                    open: true,
+                    title: t("workspace.notice.importCompletedTitle"),
+                    message:
+                        failedCount > 0
+                            ? t("workspace.notice.importFilesPartial", { successCount, failedCount })
+                            : t("workspace.notice.importFilesSuccess", { successCount }),
+                });
+            }
 
-        if (files.length > limitedFiles.length) {
-            setNotice({
-                open: true,
-                title: "Import completed",
-                message: `Imported ${successCount} file(s). Up to 30 files are imported at once.`,
-            });
-            return;
-        }
+            if (files.length > limitedFiles.length) {
+                setNotice({
+                    open: true,
+                    title: t("workspace.notice.importCompletedTitle"),
+                    message: t("workspace.notice.importFilesLimit", { successCount }),
+                });
+                return;
+            }
 
-        if (successCount === 0) {
-            setNotice({
-                open: true,
-                title: "Import failed",
-                message: failedCount > 0 ? `All ${failedCount} file(s) failed to upload.` : "No files were imported.",
-            });
+            if (successCount === 0) {
+                setNotice({
+                    open: true,
+                    title: t("workspace.notice.importFailedTitle"),
+                    message:
+                        failedCount > 0
+                            ? t("workspace.notice.importFilesAllFailed", { failedCount })
+                            : t("workspace.notice.importNoFiles"),
+                });
+            }
+        } finally {
+            setWorkspaceActionPendingCount((prev) => (prev > 0 ? prev - 1 : 0));
         }
     };
 
@@ -2607,83 +3073,98 @@ export default function WorkspacePage() {
         event.target.value = "";
         if (!files.length) return;
 
-        const folderEntries = files
-            .map((file) => {
-                const rootFolderName = String(file.webkitRelativePath || "")
-                    .split("/")
-                    .map((segment) => String(segment || "").trim())
-                    .filter(Boolean)[0];
-                return { file, rootFolderName: String(rootFolderName || "").trim() };
-            })
-            .filter((entry) => Boolean(entry.rootFolderName));
+        setWorkspaceActionPendingCount((prev) => prev + 1);
+        try {
+            const folderEntries = files
+                .map((file) => {
+                    const rootFolderName = String(file.webkitRelativePath || "")
+                        .split("/")
+                        .map((segment) => String(segment || "").trim())
+                        .filter(Boolean)[0];
+                    return { file, rootFolderName: String(rootFolderName || "").trim() };
+                })
+                .filter((entry) => Boolean(entry.rootFolderName));
 
-        const folderNames = Array.from(new Set(folderEntries.map((entry) => entry.rootFolderName))).slice(0, 30);
+            const folderNames = Array.from(new Set(folderEntries.map((entry) => entry.rootFolderName))).slice(0, 30);
 
-        if (!folderNames.length) {
-            setNotice({
-                open: true,
-                title: "Import failed",
-                message: "No folder names were detected.",
-            });
-            return;
-        }
-
-        const folderIdByName = new Map<string, string>();
-        let folderSuccessCount = 0;
-        for (const folderName of folderNames) {
-            const createdId = await createWorkspaceFileRecord(`Folder: ${folderName}`);
-            if (createdId) {
-                folderSuccessCount += 1;
-                folderIdByName.set(folderName, createdId);
+            if (!folderNames.length) {
+                setNotice({
+                    open: true,
+                    title: t("workspace.notice.importFailedTitle"),
+                    message: t("workspace.notice.importNoFolderNames"),
+                });
+                return;
             }
-        }
 
-        const validEntries = folderEntries.filter((entry) => folderIdByName.has(entry.rootFolderName));
-        const limitedEntries = validEntries.slice(0, 120);
-        let fileSuccessCount = 0;
-        let fileFailedCount = 0;
-
-        for (const entry of limitedEntries) {
-            const folderId = folderIdByName.get(entry.rootFolderName);
-            if (!folderId) {
-                fileFailedCount += 1;
-                continue;
+            const folderIdByName = new Map<string, string>();
+            let folderSuccessCount = 0;
+            for (const folderName of folderNames) {
+                const createdId = await createWorkspaceFileRecord(`Folder: ${folderName}`);
+                if (createdId) {
+                    folderSuccessCount += 1;
+                    folderIdByName.set(folderName, createdId);
+                }
             }
-            const ok = await uploadWorkspaceFileRecord(entry.file, folderId);
-            if (ok) fileSuccessCount += 1;
-            else fileFailedCount += 1;
-        }
 
-        if (folderSuccessCount > 0 || fileSuccessCount > 0) {
-            void fetchData({ silent: true });
-            setNotice({
-                open: true,
-                title: "Import completed",
-                message:
-                    fileFailedCount > 0
-                        ? `Imported ${folderSuccessCount} folder(s), ${fileSuccessCount} file(s). ${fileFailedCount} file(s) failed.`
-                        : `Imported ${folderSuccessCount} folder(s), ${fileSuccessCount} file(s).`,
-            });
-        } else {
-            setNotice({
-                open: true,
-                title: "Import failed",
-                message: "No folders were imported.",
-            });
-        }
+            const validEntries = folderEntries.filter((entry) => folderIdByName.has(entry.rootFolderName));
+            const limitedEntries = validEntries.slice(0, 120);
+            let fileSuccessCount = 0;
+            let fileFailedCount = 0;
 
-        if (validEntries.length > limitedEntries.length) {
-            setNotice({
-                open: true,
-                title: "Import completed",
-                message: `Imported ${folderSuccessCount} folder(s), ${fileSuccessCount} file(s). Up to 120 files are imported at once.`,
-            });
+            for (const entry of limitedEntries) {
+                const folderId = folderIdByName.get(entry.rootFolderName);
+                if (!folderId) {
+                    fileFailedCount += 1;
+                    continue;
+                }
+                const ok = await uploadWorkspaceFileRecord(entry.file, folderId);
+                if (ok) fileSuccessCount += 1;
+                else fileFailedCount += 1;
+            }
+
+            if (folderSuccessCount > 0 || fileSuccessCount > 0) {
+                void fetchData({ silent: true });
+                setNotice({
+                    open: true,
+                    title: t("workspace.notice.importCompletedTitle"),
+                    message:
+                        fileFailedCount > 0
+                            ? t("workspace.notice.importFoldersPartial", {
+                                folderSuccessCount,
+                                fileSuccessCount,
+                                fileFailedCount,
+                            })
+                            : t("workspace.notice.importFoldersSuccess", { folderSuccessCount, fileSuccessCount }),
+                });
+            } else {
+                setNotice({
+                    open: true,
+                    title: t("workspace.notice.importFailedTitle"),
+                    message: t("workspace.notice.importNoFolders"),
+                });
+            }
+
+            if (validEntries.length > limitedEntries.length) {
+                setNotice({
+                    open: true,
+                    title: t("workspace.notice.importCompletedTitle"),
+                    message: t("workspace.notice.importFoldersLimit", { folderSuccessCount, fileSuccessCount }),
+                });
+            }
+        } finally {
+            setWorkspaceActionPendingCount((prev) => (prev > 0 ? prev - 1 : 0));
         }
     };
 
-    const moveFileIntoFolder = async (fileId: string, nextFolderId?: string | null) => {
+    const moveFileIntoFolder = async (
+        fileId: string,
+        nextFolderId?: string | null,
+        options?: { scope?: WorkspaceMode; suppressNotice?: boolean }
+    ) => {
         if (!teamId || !fileId) return false;
         const normalizedFolderId = String(nextFolderId || "").trim() || null;
+        const requestScope = options?.scope || sidebarFileScope;
+        const suppressNotice = Boolean(options?.suppressNotice);
 
         try {
             const res = await fetch(`/api/workspace/${teamId}`, {
@@ -2693,33 +3174,37 @@ export default function WorkspacePage() {
                     type: "FILE_FOLDER",
                     id: fileId,
                     folderId: normalizedFolderId,
-                    scope: sidebarFileScope,
+                    scope: requestScope,
                 }),
             });
 
             if (!res.ok) {
-                let errorMessage = "Unable to move this file.";
-                try {
-                    const payload = await res.json();
-                    if (payload?.error) {
-                        errorMessage = String(payload.error);
-                    }
-                } catch {
-                    // keep default
+                const errorMessage = t("workspace.error.moveFile");
+                if (!suppressNotice) {
+                    setNotice({
+                        open: true,
+                        title: t("workspace.notice.moveFailedTitle"),
+                        message: errorMessage,
+                    });
                 }
-                setNotice({
-                    open: true,
-                    title: "Move failed",
-                    message: errorMessage,
-                });
                 return false;
             }
 
             setData((prev) => {
                 if (!prev) return prev;
+                if (requestScope === "my") {
+                    return {
+                        ...prev,
+                        myFiles: (prev.myFiles || []).map((file) =>
+                            file.id === fileId
+                                ? { ...file, folderId: normalizedFolderId || undefined }
+                                : file
+                        ),
+                    };
+                }
                 return {
                     ...prev,
-                    myFiles: (prev.myFiles || []).map((file) =>
+                    files: (prev.files || []).map((file) =>
                         file.id === fileId
                             ? { ...file, folderId: normalizedFolderId || undefined }
                             : file
@@ -2728,11 +3213,13 @@ export default function WorkspacePage() {
             });
             return true;
         } catch {
-            setNotice({
-                open: true,
-                title: "Move failed",
-                message: "Unable to move this file.",
-            });
+            if (!suppressNotice) {
+                setNotice({
+                    open: true,
+                    title: t("workspace.notice.moveFailedTitle"),
+                    message: t("workspace.error.moveFile"),
+                });
+            }
             return false;
         }
     };
@@ -2758,9 +3245,17 @@ export default function WorkspacePage() {
 
             setData((prev) => {
                 if (!prev) return prev;
+                if (sidebarFileScope === "my") {
+                    return {
+                        ...prev,
+                        myFiles: (prev.myFiles || []).map((file) =>
+                            file.id === fileId ? { ...file, title: normalizedTitle } : file
+                        ),
+                    };
+                }
                 return {
                     ...prev,
-                    myFiles: (prev.myFiles || []).map((file) =>
+                    files: (prev.files || []).map((file) =>
                         file.id === fileId ? { ...file, title: normalizedTitle } : file
                     ),
                 };
@@ -2781,8 +3276,8 @@ export default function WorkspacePage() {
         setInlineRename({
             fileId: targetFile.id,
             isFolder,
-            name: isFolder ? getFolderDisplayName(targetFile.title) : targetFile.title,
-            originalName: isFolder ? getFolderDisplayName(targetFile.title) : targetFile.title,
+            name: isFolder ? getFolderLabel(targetFile.title) : targetFile.title,
+            originalName: isFolder ? getFolderLabel(targetFile.title) : targetFile.title,
             isSubmitting: false,
             error: "",
         });
@@ -2796,7 +3291,7 @@ export default function WorkspacePage() {
         if (!inlineRename || inlineRename.isSubmitting) return;
         const trimmedName = String(inlineRename.name || "").trim().replace(/\s+/g, " ").slice(0, 120);
         if (!trimmedName) {
-            setInlineRename((prev) => (prev ? { ...prev, error: "Name is required." } : prev));
+            setInlineRename((prev) => (prev ? { ...prev, error: t("workspace.error.nameRequired") } : prev));
             return;
         }
 
@@ -2816,7 +3311,7 @@ export default function WorkspacePage() {
                     ? {
                         ...prev,
                         isSubmitting: false,
-                        error: "Unable to rename this item.",
+                        error: t("workspace.error.renameItem"),
                     }
                     : prev
             );
@@ -2841,6 +3336,18 @@ export default function WorkspacePage() {
         });
     };
 
+    const moveFileToFolderFromMenu = async (folderId?: string | null) => {
+        if (!fileItemMenu) return;
+        const targetFile = currentFiles.find((file) => file.id === fileItemMenu.fileId);
+        if (!targetFile || isFolderEntry(targetFile)) return;
+
+        const nextFolderId = String(folderId || "").trim() || null;
+        const currentFolderId = String(targetFile.folderId || "").trim() || null;
+        setFileItemMenu(null);
+        if (nextFolderId === currentFolderId) return;
+        await moveFileIntoFolder(targetFile.id, nextFolderId);
+    };
+
     const closeMoveFile = () => {
         setMoveFileModal((prev) => (prev.isSubmitting ? prev : { ...prev, open: false, error: "" }));
     };
@@ -2854,7 +3361,7 @@ export default function WorkspacePage() {
             setMoveFileModal((prev) => ({
                 ...prev,
                 isSubmitting: false,
-                error: "Unable to move this file.",
+                error: t("workspace.error.moveFile"),
             }));
             return;
         }
@@ -2872,7 +3379,7 @@ export default function WorkspacePage() {
         const targetGroup = workspaceGroups.find((group) => group.id === groupId);
         if (!targetGroup) return;
 
-        const originalName = String(targetGroup.name || "").trim() || "Group";
+        const originalName = String(targetGroup.name || "").trim() || t("workspace.group");
         setGroupInlineRename({
             groupId,
             name: originalName,
@@ -2893,7 +3400,7 @@ export default function WorkspacePage() {
             .slice(0, 60);
 
         if (!trimmedName) {
-            setGroupInlineRename((prev) => (prev ? { ...prev, error: "Group name is required." } : prev));
+            setGroupInlineRename((prev) => (prev ? { ...prev, error: t("workspace.error.groupNameRequired") } : prev));
             return;
         }
 
@@ -2942,13 +3449,153 @@ export default function WorkspacePage() {
         return null;
     };
 
-    const placeGroupItemsOnCanvas = (groupId: string, clientX: number, clientY: number) => {
+    const parseDraggedSidebarFileIdsFromTransfer = (
+        event: Pick<React.DragEvent<HTMLElement>, "dataTransfer">
+    ): string[] => {
+        const rawMulti = String(event.dataTransfer.getData("application/x-onbure-file-ids") || "").trim();
+        if (rawMulti) {
+            try {
+                const parsed = JSON.parse(rawMulti) as unknown;
+                if (Array.isArray(parsed)) {
+                    const normalized = Array.from(
+                        new Set(parsed.map((value) => String(value || "").trim()).filter(Boolean))
+                    );
+                    if (normalized.length > 0) return normalized;
+                }
+            } catch {
+                // ignore parse error
+            }
+        }
+
+        const single = String(event.dataTransfer.getData("application/x-onbure-file-id") || "").trim();
+        return single ? [single] : [];
+    };
+
+    const expandFolderBundleSourceIds = (rootIds: string[]): string[] => {
+        const normalizedRoots = Array.from(new Set(rootIds.map((id) => String(id || "").trim()).filter(Boolean)));
+        if (normalizedRoots.length === 0) return [];
+
+        const collected = new Set<string>();
+        const queue = [...normalizedRoots];
+        while (queue.length > 0) {
+            const currentId = String(queue.shift() || "").trim();
+            if (!currentId || collected.has(currentId)) continue;
+            const currentFile = fileByIdMap.get(currentId);
+            if (!currentFile) continue;
+
+            collected.add(currentId);
+            if (!isFolderEntry(currentFile)) continue;
+
+            for (const candidate of currentFiles) {
+                const parentFolderId = String(candidate.folderId || "").trim();
+                if (!parentFolderId || parentFolderId !== currentId) continue;
+                if (!collected.has(candidate.id)) {
+                    queue.push(candidate.id);
+                }
+            }
+        }
+
+        return Array.from(collected);
+    };
+
+    const placeGroupItemsOnCanvas = async (groupId: string, clientX: number, clientY: number) => {
         const targetGroup = resolvedWorkspaceGroups.find((group) => group.id === groupId);
         if (!targetGroup || targetGroup.items.length === 0) return;
-        const groupItemKeySet = new Set(targetGroup.items.map((item) => item.key));
+
+        let itemsToPlace = targetGroup.items;
+        let visibleItemKeySet = new Set(itemsToPlace.map((item) => item.key));
+        const groupItemKeyReplacements = new Map<string, string>();
+
+        if (workspaceMode === "team") {
+            const groupFileSourceIds = Array.from(
+                new Set(
+                    targetGroup.items
+                        .filter((item) => item.kind === "file")
+                        .map((item) => {
+                            const parsedItemKey = parseCanvasItemKey(item.key);
+                            return extractCanvasPlacementSourceId(parsedItemKey?.id || item.id);
+                        })
+                        .filter(Boolean)
+                )
+            );
+
+            if (groupFileSourceIds.length > 0) {
+                const sourceIdsForTeamShare = expandFolderBundleSourceIds(groupFileSourceIds);
+                const resolvedEntries = await Promise.all(
+                    sourceIdsForTeamShare.map(async (sourceId) => {
+                        const resolvedFile = await resolveCanvasDropFile(sourceId);
+                        if (!resolvedFile) return null;
+                        return { sourceId, resolvedFile };
+                    })
+                );
+                const resolvedBySourceId = new Map<string, WorkspaceFile>();
+                for (const entry of resolvedEntries) {
+                    if (!entry) continue;
+                    resolvedBySourceId.set(entry.sourceId, entry.resolvedFile);
+                }
+
+                const sourceIdSet = new Set(sourceIdsForTeamShare);
+                await Promise.all(
+                    sourceIdsForTeamShare.map(async (sourceId) => {
+                        const sourceFile = fileByIdMap.get(sourceId);
+                        if (!sourceFile) return;
+                        const sourceFolderId = String(sourceFile.folderId || "").trim();
+                        if (!sourceFolderId || !sourceIdSet.has(sourceFolderId)) return;
+
+                        const teamChildFile = resolvedBySourceId.get(sourceId);
+                        const teamFolderFile = resolvedBySourceId.get(sourceFolderId);
+                        if (!teamChildFile || !teamFolderFile || teamChildFile.id === teamFolderFile.id) return;
+
+                        await moveFileIntoFolder(teamChildFile.id, teamFolderFile.id, {
+                            scope: "team",
+                            suppressNotice: true,
+                        });
+                    })
+                );
+
+                itemsToPlace = targetGroup.items.map((item) => {
+                    if (item.kind !== "file") return item;
+                    const parsedItemKey = parseCanvasItemKey(item.key);
+                    const sourceFileId = extractCanvasPlacementSourceId(parsedItemKey?.id || item.id);
+                    const resolvedTeamFile = resolvedBySourceId.get(sourceFileId);
+                    if (!resolvedTeamFile) return item;
+                    const mappedKey = buildCanvasItemKey("file", resolvedTeamFile.id);
+                    visibleItemKeySet.add(mappedKey);
+                    if (mappedKey !== item.key) {
+                        groupItemKeyReplacements.set(item.key, mappedKey);
+                    }
+                    return {
+                        ...item,
+                        id: resolvedTeamFile.id,
+                        key: mappedKey,
+                    };
+                });
+
+                if (groupItemKeyReplacements.size > 0) {
+                    setWorkspaceGroups((prev) =>
+                        prev.map((group) => {
+                            if (group.id !== groupId) return group;
+                            const nextKeys = group.itemKeys.map(
+                                (itemKey) => groupItemKeyReplacements.get(itemKey) || itemKey
+                            );
+                            const dedupedNextKeys = Array.from(new Set(nextKeys));
+                            const unchanged =
+                                dedupedNextKeys.length === group.itemKeys.length &&
+                                dedupedNextKeys.every((itemKey, index) => itemKey === group.itemKeys[index]);
+                            return unchanged ? group : { ...group, itemKeys: dedupedNextKeys };
+                        })
+                    );
+                }
+            }
+        }
+
+        itemsToPlace = itemsToPlace.filter((item) => canViewerMoveCanvasItem(item.key));
+        if (itemsToPlace.length === 0) return;
+        visibleItemKeySet = new Set(itemsToPlace.map((item) => item.key));
+
         setHiddenCanvasGroupIds((prev) => prev.filter((id) => id !== groupId));
         setHiddenCanvasItemKeys((prev) =>
-            prev.filter((itemKey) => !groupItemKeySet.has(itemKey))
+            prev.filter((itemKey) => !visibleItemKeySet.has(itemKey))
         );
 
         const canvas = canvasRef.current;
@@ -2957,14 +3604,14 @@ export default function WorkspacePage() {
         const centerX = clientX - rect.left;
         const centerY = clientY - rect.top;
 
-        const count = targetGroup.items.length;
+        const count = itemsToPlace.length;
         const cols = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(count))));
         const gap = 26;
         const fileUpdates: Record<string, CanvasPosition> = {};
         const memberUpdates: Record<string, CanvasPosition> = {};
         const annotationUpdates = new Map<string, CanvasPosition>();
 
-        targetGroup.items.forEach((item, index) => {
+        itemsToPlace.forEach((item, index) => {
             const parsedItemKey = parseCanvasItemKey(item.key);
             const placementOrItemId = parsedItemKey?.id || item.id;
             const row = Math.floor(index / cols);
@@ -3021,6 +3668,19 @@ export default function WorkspacePage() {
         }
         if (Object.keys(memberUpdates).length > 0) {
             setCanvasMemberPositions((prev) => ({ ...prev, ...memberUpdates }));
+            const viewerUserIdForPlacement = String(data?.viewerUserId || "").trim();
+            if (workspaceMode === "team" && viewerUserIdForPlacement) {
+                setCanvasMemberPlacementOwners((prev) => {
+                    let changed = false;
+                    const next = { ...prev };
+                    for (const placementId of Object.keys(memberUpdates)) {
+                        if (next[placementId] || canvasMemberPositions[placementId]) continue;
+                        next[placementId] = viewerUserIdForPlacement;
+                        changed = true;
+                    }
+                    return changed ? next : prev;
+                });
+            }
         }
         if (annotationUpdates.size > 0) {
             const now = new Date().toISOString();
@@ -3038,12 +3698,24 @@ export default function WorkspacePage() {
             );
         }
 
-        setSelectedCanvasItemKeys(targetGroup.items.map((item) => item.key));
+        setSelectedCanvasItemKeys(itemsToPlace.map((item) => item.key));
     };
 
     const handleFileDragStart = (event: React.DragEvent<HTMLElement>, file: WorkspaceFile) => {
-        trackMyTeamAction("myteam.drag_file", { fileId: file.id });
+        const selectedIds = Array.from(
+            new Set(selectedSidebarFileIds.map((fileId) => String(fileId || "").trim()).filter(Boolean))
+        );
+        const useSelectedBundle = selectedIds.length > 1 && selectedIds.includes(file.id);
+        const draggedFileIds = useSelectedBundle
+            ? selectedIds.filter((selectedId) => currentFiles.some((item) => item.id === selectedId))
+            : [file.id];
+
+        trackMyTeamAction("myteam.drag_file", {
+            fileId: file.id,
+            bundleCount: draggedFileIds.length,
+        });
         event.dataTransfer.setData("application/x-onbure-file-id", file.id);
+        event.dataTransfer.setData("application/x-onbure-file-ids", JSON.stringify(draggedFileIds));
         event.dataTransfer.setData("text/plain", file.title);
         event.dataTransfer.effectAllowed = "move";
         setDraggingSidebarFileId(file.id);
@@ -3122,13 +3794,18 @@ export default function WorkspacePage() {
         event.dataTransfer.effectAllowed = "move";
     };
 
-    const handleCanvasDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    const handleCanvasDrop = async (event: React.DragEvent<HTMLDivElement>) => {
         event.preventDefault();
 
         const groupId = parseDraggedGroupIdFromTransfer(event);
         if (groupId) {
             setDraggingSidebarGroupId(null);
-            placeGroupItemsOnCanvas(groupId, event.clientX, event.clientY);
+            setWorkspaceActionPendingCount((prev) => prev + 1);
+            try {
+                await placeGroupItemsOnCanvas(groupId, event.clientX, event.clientY);
+            } finally {
+                setWorkspaceActionPendingCount((prev) => (prev > 0 ? prev - 1 : 0));
+            }
             return;
         }
         const groupEntryPrimary = String(
@@ -3149,8 +3826,8 @@ export default function WorkspacePage() {
             ).trim();
             const memberPlacementId =
                 !isFromGroupEntryDrag &&
-                requestedPlacementId &&
-                extractCanvasPlacementSourceId(requestedPlacementId) === memberId
+                    requestedPlacementId &&
+                    extractCanvasPlacementSourceId(requestedPlacementId) === memberId
                     ? requestedPlacementId
                     : createCanvasPlacementId(memberId);
 
@@ -3172,6 +3849,16 @@ export default function WorkspacePage() {
                 ...prev,
                 [memberPlacementId]: position,
             }));
+            const viewerUserIdForPlacement = String(data?.viewerUserId || "").trim();
+            if (viewerUserIdForPlacement) {
+                setCanvasMemberPlacementOwners((prev) => {
+                    if (prev[memberPlacementId] === viewerUserIdForPlacement) return prev;
+                    return {
+                        ...prev,
+                        [memberPlacementId]: viewerUserIdForPlacement,
+                    };
+                });
+            }
             setHiddenCanvasItemKeys((prev) =>
                 prev.filter((itemKey) => itemKey !== buildCanvasItemKey("member", memberPlacementId))
             );
@@ -3210,34 +3897,170 @@ export default function WorkspacePage() {
             return;
         }
 
-        const fileId = event.dataTransfer.getData("application/x-onbure-file-id");
-        if (!fileId) return;
-        if (!currentFiles.some((file) => file.id === fileId)) return;
-        const requestedPlacementId = String(
-            event.dataTransfer.getData("application/x-onbure-file-placement-id") || ""
-        ).trim();
-        const filePlacementId =
-            !isFromGroupEntryDrag &&
-            requestedPlacementId &&
-            extractCanvasPlacementSourceId(requestedPlacementId) === fileId
-                ? requestedPlacementId
-                : createCanvasPlacementId(fileId);
+        const hasFilePayload =
+            event.dataTransfer.types.includes("application/x-onbure-file-id") ||
+            event.dataTransfer.types.includes("application/x-onbure-file-ids");
+        if (!hasFilePayload) return;
 
-        const canvas = canvasRef.current;
-        if (!canvas) return;
+        setWorkspaceActionPendingCount((prev) => prev + 1);
+        try {
+            const rawDraggedSidebarFileIds = parseDraggedSidebarFileIdsFromTransfer(event);
+            const draggedSidebarRootIds = Array.from(
+                new Set(rawDraggedSidebarFileIds.map((id) => String(id || "").trim()).filter(Boolean))
+            );
+            const sourceIdsForTeamShare =
+                workspaceMode === "team"
+                    ? expandFolderBundleSourceIds(draggedSidebarRootIds)
+                    : draggedSidebarRootIds;
 
-        const rect = canvas.getBoundingClientRect();
-        const rawX = event.clientX - rect.left - CANVAS_FILE_WIDTH / 2;
-        const rawY = event.clientY - rect.top - CANVAS_FILE_HEIGHT / 2;
-        const position = clampToCanvas({ x: rawX, y: rawY }, rect.width, rect.height);
+            const resolvedEntries = await Promise.all(
+                sourceIdsForTeamShare.map(async (sourceFileId) => {
+                    const resolvedFile = await resolveCanvasDropFile(sourceFileId);
+                    if (!resolvedFile) return null;
+                    return { sourceFileId, resolvedFile };
+                })
+            );
+            const resolvedBySourceId = new Map<string, WorkspaceFile>();
+            for (const entry of resolvedEntries) {
+                if (!entry) continue;
+                resolvedBySourceId.set(entry.sourceFileId, entry.resolvedFile);
+            }
 
-        setCanvasFilePositions((prev) => ({
-            ...prev,
-            [filePlacementId]: position,
-        }));
-        setHiddenCanvasItemKeys((prev) =>
-            prev.filter((itemKey) => itemKey !== buildCanvasItemKey("file", filePlacementId))
-        );
+            if (workspaceMode === "team" && resolvedBySourceId.size > 0) {
+                const sourceIdSet = new Set(sourceIdsForTeamShare);
+                await Promise.all(
+                    sourceIdsForTeamShare.map(async (sourceFileId) => {
+                        const sourceFile = fileByIdMap.get(sourceFileId);
+                        if (!sourceFile) return;
+                        const sourceFolderId = String(sourceFile.folderId || "").trim();
+                        if (!sourceFolderId || !sourceIdSet.has(sourceFolderId)) return;
+
+                        const teamChildFile = resolvedBySourceId.get(sourceFileId);
+                        const teamFolderFile = resolvedBySourceId.get(sourceFolderId);
+                        if (!teamChildFile || !teamFolderFile || teamChildFile.id === teamFolderFile.id) return;
+
+                        await moveFileIntoFolder(teamChildFile.id, teamFolderFile.id, {
+                            scope: "team",
+                            suppressNotice: true,
+                        });
+                    })
+                );
+
+                const nestedTeamFileIds = sourceIdsForTeamShare
+                    .filter((sourceFileId) => {
+                        const sourceFile = fileByIdMap.get(sourceFileId);
+                        const sourceFolderId = String(sourceFile?.folderId || "").trim();
+                        return Boolean(sourceFolderId && sourceIdSet.has(sourceFolderId));
+                    })
+                    .map((sourceFileId) => String(resolvedBySourceId.get(sourceFileId)?.id || "").trim())
+                    .filter(Boolean);
+
+                if (nestedTeamFileIds.length > 0) {
+                    const nestedTeamFileIdSet = new Set(nestedTeamFileIds);
+                    setCanvasFilePositions((prev) => {
+                        let changed = false;
+                        const next: Record<string, CanvasPosition> = {};
+                        for (const [placementId, position] of Object.entries(prev)) {
+                            const sourceId = extractCanvasPlacementSourceId(placementId);
+                            if (nestedTeamFileIdSet.has(sourceId)) {
+                                changed = true;
+                                continue;
+                            }
+                            next[placementId] = position;
+                        }
+                        return changed ? next : prev;
+                    });
+                    setHiddenCanvasItemKeys((prev) =>
+                        Array.from(
+                            new Set([
+                                ...prev,
+                                ...nestedTeamFileIds.map((teamFileId) => buildCanvasItemKey("file", teamFileId)),
+                            ])
+                        )
+                    );
+                }
+            }
+
+            const resolvedDraggedFiles = draggedSidebarRootIds
+                .map((sourceFileId) => resolvedBySourceId.get(sourceFileId))
+                .filter(Boolean) as WorkspaceFile[];
+            const draggedFileIds = Array.from(new Set(resolvedDraggedFiles.map((file) => file.id)));
+            if (draggedFileIds.length > 1) {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const rect = canvas.getBoundingClientRect();
+                const centerX = event.clientX - rect.left;
+                const centerY = event.clientY - rect.top;
+                const count = draggedFileIds.length;
+                const cols = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(count))));
+                const rows = Math.max(1, Math.ceil(count / cols));
+                const gapX = CANVAS_FILE_WIDTH + 20;
+                const gapY = CANVAS_FILE_HEIGHT + 18;
+                const fileUpdates: Record<string, CanvasPosition> = {};
+                const createdItemKeys: string[] = [];
+
+                draggedFileIds.forEach((sourceFileId, index) => {
+                    const col = index % cols;
+                    const row = Math.floor(index / cols);
+                    const x =
+                        centerX + (col - (cols - 1) / 2) * gapX - CANVAS_FILE_WIDTH / 2;
+                    const y =
+                        centerY + (row - (rows - 1) / 2) * gapY - CANVAS_FILE_HEIGHT / 2;
+                    const placementId = createCanvasPlacementId(sourceFileId);
+                    fileUpdates[placementId] = clampToCanvas({ x, y }, rect.width, rect.height);
+                    createdItemKeys.push(buildCanvasItemKey("file", placementId));
+                });
+
+                setCanvasFilePositions((prev) => ({ ...prev, ...fileUpdates }));
+                if (createdItemKeys.length > 0) {
+                    const visibleSet = new Set(createdItemKeys);
+                    setHiddenCanvasItemKeys((prev) => prev.filter((itemKey) => !visibleSet.has(itemKey)));
+                    setSelectedCanvasItemKeys(createdItemKeys);
+                }
+                return;
+            }
+
+            const rawSingleFileId = String(event.dataTransfer.getData("application/x-onbure-file-id") || "").trim();
+            let fileId = draggedFileIds[0] || "";
+            if (!fileId && rawSingleFileId) {
+                const resolvedSingleFile =
+                    resolvedBySourceId.get(rawSingleFileId) || (await resolveCanvasDropFile(rawSingleFileId));
+                fileId = resolvedSingleFile?.id || (canvasFileByIdMap.has(rawSingleFileId) ? rawSingleFileId : "");
+            }
+            if (!fileId) return;
+            if (workspaceMode !== "team" && !canvasFileByIdMap.has(fileId)) return;
+            const requestedPlacementId = String(
+                event.dataTransfer.getData("application/x-onbure-file-placement-id") || ""
+            ).trim();
+            const filePlacementId =
+                !isFromGroupEntryDrag &&
+                    requestedPlacementId &&
+                    extractCanvasPlacementSourceId(requestedPlacementId) === fileId
+                    ? requestedPlacementId
+                    : createCanvasPlacementId(fileId);
+
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const rawX = event.clientX - rect.left - CANVAS_FILE_WIDTH / 2;
+            const rawY = event.clientY - rect.top - CANVAS_FILE_HEIGHT / 2;
+            const position = clampToCanvas({ x: rawX, y: rawY }, rect.width, rect.height);
+
+            setCanvasFilePositions((prev) => ({
+                ...prev,
+                [filePlacementId]: position,
+            }));
+            setHiddenCanvasItemKeys((prev) =>
+                prev.filter(
+                    (itemKey) =>
+                        itemKey !== buildCanvasItemKey("file", filePlacementId) &&
+                        itemKey !== buildCanvasItemKey("file", fileId)
+                )
+            );
+        } finally {
+            setWorkspaceActionPendingCount((prev) => (prev > 0 ? prev - 1 : 0));
+        }
     };
 
     const handleCanvasDragOver = (event: React.DragEvent<HTMLDivElement>) => {
@@ -3251,6 +4074,7 @@ export default function WorkspacePage() {
         position: CanvasPosition
     ) => {
         if (event.button !== 0) return;
+        if (!canViewerRemoveFileFromWorkspace(fileId)) return;
         const key = buildCanvasItemKey("file", fileId);
         if (beginSelectedItemsDrag(event, key)) return;
         const canvas = canvasRef.current;
@@ -3270,6 +4094,7 @@ export default function WorkspacePage() {
         position: CanvasPosition
     ) => {
         if (event.button !== 0) return;
+        if (!canViewerModifyMemberPlacement(memberId)) return;
         const key = buildCanvasItemKey("member", memberId);
         if (beginSelectedItemsDrag(event, key)) return;
         const canvas = canvasRef.current;
@@ -3343,32 +4168,110 @@ export default function WorkspacePage() {
         });
     };
 
+    const removeItemCommentsForKeys = (itemKeys: string[]) => {
+        const normalizedKeys = new Set(
+            itemKeys
+                .map((itemKey) => String(itemKey || "").trim())
+                .filter((itemKey) => Boolean(parseCanvasItemKey(itemKey)))
+        );
+        if (normalizedKeys.size === 0) return;
+        setItemComments((prev) =>
+            prev.filter((comment) => !normalizedKeys.has(String(comment.itemKey || "").trim()))
+        );
+        setActiveItemCommentKey((prev) => (prev && normalizedKeys.has(prev) ? null : prev));
+        setItemCommentDraft((prev) => (activeItemCommentKey && normalizedKeys.has(activeItemCommentKey) ? "" : prev));
+    };
+
+    const canAddCommentToItem = (itemKey: string) => {
+        const normalizedKey = String(itemKey || "").trim();
+        const parsed = parseCanvasItemKey(normalizedKey);
+        if (!parsed) return false;
+        if (parsed.kind !== "annotation") return true;
+        const annotationId = extractCanvasPlacementSourceId(parsed.id);
+        const targetAnnotation = annotations.find(
+            (item) => item.id === parsed.id || item.id === annotationId
+        );
+        return Boolean(targetAnnotation && targetAnnotation.kind !== "comment");
+    };
+
+    const openItemCommentComposer = (itemKey: string) => {
+        const normalizedKey = String(itemKey || "").trim();
+        if (!parseCanvasItemKey(normalizedKey)) return;
+        if (!canAddCommentToItem(normalizedKey)) return;
+        setActiveItemCommentKey(normalizedKey);
+        setItemCommentDraft("");
+        setCommentWindowPosition(null);
+    };
+
+    const closeItemCommentComposer = () => {
+        setActiveItemCommentKey(null);
+        setItemCommentDraft("");
+    };
+
+    const submitItemComment = (itemKey: string) => {
+        const normalizedKey = String(itemKey || "").trim();
+        if (!parseCanvasItemKey(normalizedKey)) return;
+        if (!canAddCommentToItem(normalizedKey)) return;
+        const nextText = String(itemCommentDraft || "").trim().slice(0, 1000);
+        if (!nextText) return;
+
+        const authorUserId = String(data?.viewerUserId || "").trim();
+        const authorName =
+            members.find((member) => member.userId === authorUserId)?.username ||
+            authorUserId ||
+            t("workspace.unknown");
+        const id =
+            typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                ? crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        const now = new Date().toISOString();
+        const created: WorkspaceItemComment = {
+            id,
+            itemKey: normalizedKey,
+            authorUserId,
+            authorName,
+            text: nextText,
+            createdAt: now,
+        };
+
+        setItemComments((prev) => [...prev, created]);
+        setItemCommentDraft("");
+    };
+
     const handleRemovePlacedMember = (
         memberPlacementId: string,
-        options?: { removeFromGroups?: boolean }
+        options?: { removeFromGroups?: boolean; bypassPermissionCheck?: boolean }
     ) => {
         const normalizedPlacementId = String(memberPlacementId || "").trim();
         if (!normalizedPlacementId) return;
         const sourceId = extractCanvasPlacementSourceId(normalizedPlacementId);
+        if (!options?.bypassPermissionCheck && !canViewerModifyMemberPlacement(sourceId)) {
+            setNotice({
+                open: true,
+                title: t("workspace.notice.deleteFailedTitle"),
+                message: t("workspace.error.accessDenied"),
+            });
+            return;
+        }
         const removeBySourceId = sourceId === normalizedPlacementId;
         const shouldRemoveFromGroups = options?.removeFromGroups ?? removeBySourceId;
         const candidatePlacementIds = removeBySourceId
             ? Object.keys(canvasMemberPositions).filter(
-                  (placementId) => extractCanvasPlacementSourceId(placementId) === sourceId
-              )
+                (placementId) => extractCanvasPlacementSourceId(placementId) === sourceId
+            )
             : [normalizedPlacementId];
 
         const groupedMemberItemKeysBySource = removeBySourceId
             ? workspaceGroups.flatMap((group) =>
-                  group.itemKeys.filter((itemKey) => {
-                      const parsed = parseCanvasItemKey(itemKey);
-                      return (
-                          parsed !== null &&
-                          parsed.kind === "member" &&
-                          extractCanvasPlacementSourceId(parsed.id) === sourceId
-                      );
-                  })
-              )
+                group.itemKeys.filter((itemKey) => {
+                    const parsed = parseCanvasItemKey(itemKey);
+                    return (
+                        parsed !== null &&
+                        parsed.kind === "member" &&
+                        extractCanvasPlacementSourceId(parsed.id) === sourceId
+                    );
+                })
+            )
             : [];
 
         const itemKeysToRemove = Array.from(
@@ -3396,6 +4299,22 @@ export default function WorkspacePage() {
             delete next[normalizedPlacementId];
             return next;
         });
+        setCanvasMemberPlacementOwners((prev) => {
+            let changed = false;
+            const next: Record<string, string> = {};
+            for (const [placementId, ownerUserId] of Object.entries(prev)) {
+                if (extractCanvasPlacementSourceId(placementId) === sourceId) {
+                    changed = true;
+                    continue;
+                }
+                next[placementId] = ownerUserId;
+            }
+            return changed ? next : prev;
+        });
+
+        if (itemKeysToRemove.length > 0) {
+            removeItemCommentsForKeys(itemKeysToRemove);
+        }
 
         if (shouldRemoveFromGroups && itemKeysToRemove.length > 0) {
             removeItemKeysFromAllGroups(itemKeysToRemove);
@@ -3404,38 +4323,57 @@ export default function WorkspacePage() {
 
     const handleRemovePlacedFile = (
         filePlacementOrSourceId: string,
-        options?: { removeFromGroups?: boolean }
+        options?: { removeFromGroups?: boolean; bypassPermissionCheck?: boolean }
     ) => {
         const normalized = String(filePlacementOrSourceId || "").trim();
         if (!normalized) return;
         const sourceId = extractCanvasPlacementSourceId(normalized);
+        if (!options?.bypassPermissionCheck && !canViewerRemoveFileFromWorkspace(sourceId)) {
+            setNotice({
+                open: true,
+                title: t("workspace.notice.deleteFailedTitle"),
+                message: t("workspace.error.accessDenied"),
+            });
+            return;
+        }
         const removeBySourceId = sourceId === normalized;
         const shouldRemoveFromGroups = options?.removeFromGroups ?? removeBySourceId;
         const candidatePlacementIds = removeBySourceId
             ? Object.keys(canvasFilePositions).filter(
-                  (placementId) => extractCanvasPlacementSourceId(placementId) === sourceId
-              )
+                (placementId) => extractCanvasPlacementSourceId(placementId) === sourceId
+            )
             : [normalized];
 
         const groupedFileItemKeysBySource = removeBySourceId
             ? workspaceGroups.flatMap((group) =>
-                  group.itemKeys.filter((itemKey) => {
-                      const parsed = parseCanvasItemKey(itemKey);
-                      return (
-                          parsed !== null &&
-                          parsed.kind === "file" &&
-                          extractCanvasPlacementSourceId(parsed.id) === sourceId
-                      );
-                  })
-              )
+                group.itemKeys.filter((itemKey) => {
+                    const parsed = parseCanvasItemKey(itemKey);
+                    return (
+                        parsed !== null &&
+                        parsed.kind === "file" &&
+                        extractCanvasPlacementSourceId(parsed.id) === sourceId
+                    );
+                })
+            )
             : [];
 
         const itemKeysToRemove = Array.from(
             new Set([
                 ...candidatePlacementIds.map((placementId) => buildCanvasItemKey("file", placementId)),
                 ...groupedFileItemKeysBySource,
+                buildCanvasItemKey("file", sourceId),
             ])
         );
+
+        if (itemKeysToRemove.length > 0) {
+            removeItemCommentsForKeys(itemKeysToRemove);
+        }
+
+        if (shouldRemoveFromGroups && itemKeysToRemove.length > 0) {
+            removeItemKeysFromAllGroups(itemKeysToRemove);
+        }
+
+        setHiddenCanvasItemKeys((prev) => Array.from(new Set([...prev, ...itemKeysToRemove])));
 
         setCanvasFilePositions((prev) => {
             if (removeBySourceId) {
@@ -3455,10 +4393,6 @@ export default function WorkspacePage() {
             delete next[normalized];
             return next;
         });
-
-        if (shouldRemoveFromGroups && itemKeysToRemove.length > 0) {
-            removeItemKeysFromAllGroups(itemKeysToRemove);
-        }
     };
 
     const openMemberProfile = (memberUserId: string) => {
@@ -3491,13 +4425,15 @@ export default function WorkspacePage() {
         anchorKey: string
     ) => {
         if (!selectedCanvasItemKeySet.has(anchorKey)) return false;
+        if (!canViewerMoveCanvasItem(anchorKey)) return false;
 
         const selectedKeys = Array.from(
             new Set(
                 selectedCanvasItemKeys.filter((itemKey) => selectableCanvasItemMap.has(itemKey))
             )
         );
-        if (selectedKeys.length < 2) return false;
+        const movableSelectedKeys = selectedKeys.filter((itemKey) => canViewerMoveCanvasItem(itemKey));
+        if (movableSelectedKeys.length < 2) return false;
 
         const anchorItem = selectableCanvasItemMap.get(anchorKey);
         if (!anchorItem) return false;
@@ -3506,7 +4442,7 @@ export default function WorkspacePage() {
         if (!canvas) return false;
         const rect = canvas.getBoundingClientRect();
 
-        const items = selectedKeys
+        const items = movableSelectedKeys
             .map((itemKey) => selectableCanvasItemMap.get(itemKey))
             .filter(Boolean)
             .map((item) => {
@@ -3546,16 +4482,20 @@ export default function WorkspacePage() {
 
         const targetGroup = resolvedWorkspaceGroups.find((group) => group.id === groupId);
         if (!targetGroup || targetGroup.items.length === 0) return;
+        const canvasItems = targetGroup.items
+            .filter((item) => selectableCanvasItemMap.has(item.key))
+            .filter((item) => canViewerMoveCanvasItem(item.key));
+        if (canvasItems.length === 0) return;
         trackMyTeamAction("myteam.drag_group", { groupId, source: "canvas_outline" });
 
-        const anchorItem = targetGroup.items[0];
+        const anchorItem = canvasItems[0];
         if (!anchorItem) return;
 
         const canvas = canvasRef.current;
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
 
-        const items = targetGroup.items.map((item) => {
+        const items = canvasItems.map((item) => {
             const parsedKey = parseCanvasItemKey(item.key);
             return {
                 key: item.key,
@@ -3642,11 +4582,11 @@ export default function WorkspacePage() {
         canvasY: number,
         mode: "default" | "groupOnly" = "default"
     ) => {
-        const canCreateGroup = selectedCanvasItemKeys.length > 0;
         const canCreateAnnotation = mode !== "groupOnly";
+        const canCreateGroup = workspaceMode === "my" && selectedCanvasItemKeys.length > 0;
         const canMoveToGroup = selectedCanvasItemKeys.length > 0;
         const canRemoveFromWorkspace = selectedCanvasItemKeys.length > 0;
-        if (!canCreateGroup && !canCreateAnnotation && !canMoveToGroup && !canRemoveFromWorkspace) return;
+        if (!canCreateAnnotation && !canCreateGroup && !canMoveToGroup && !canRemoveFromWorkspace) return;
 
         const menuWidth = 186;
         const moveSubmenuWidth = 188;
@@ -3672,16 +4612,16 @@ export default function WorkspacePage() {
         setWorkspaceCanvasMenu({ x, y, canvasX, canvasY, mode, moveSubmenuLeft });
     };
 
-    const createWorkspaceGroupFromSelection = () => {
+    const createGroupFromSelectedCanvasItems = () => {
         const selectedKeys = Array.from(
             new Set(selectedCanvasItemKeys.filter((itemKey) => selectableCanvasItemMap.has(itemKey)))
         );
-        trackMyTeamAction("myteam.create_group", {
-            source: "selection",
-            itemCount: selectedKeys.length,
-        });
+        if (selectedKeys.length === 0) {
+            setWorkspaceCanvasMenu(null);
+            return;
+        }
+        trackMyTeamAction("myteam.create_group", { source: "canvas_context", itemCount: selectedKeys.length });
         createWorkspaceGroup(selectedKeys);
-        setSelectedCanvasItemKeys([]);
         setWorkspaceCanvasMenu(null);
     };
 
@@ -3713,15 +4653,25 @@ export default function WorkspacePage() {
         const memberPlacementIds = new Set<string>();
         const annotationIds = new Set<string>();
         const groupedAnnotationItemKeysToHide = new Set<string>();
+        let blockedFileCount = 0;
+        let blockedMemberCount = 0;
 
         for (const itemKey of selectedKeys) {
             const parsed = parseCanvasItemKey(itemKey);
             if (!parsed) continue;
             if (parsed.kind === "file") {
+                if (!canViewerRemoveFileFromWorkspace(parsed.id)) {
+                    blockedFileCount += 1;
+                    continue;
+                }
                 filePlacementIds.add(parsed.id);
                 continue;
             }
             if (parsed.kind === "member") {
+                if (!canViewerModifyMemberPlacement(parsed.id)) {
+                    blockedMemberCount += 1;
+                    continue;
+                }
                 memberPlacementIds.add(parsed.id);
                 continue;
             }
@@ -3734,13 +4684,41 @@ export default function WorkspacePage() {
             }
         }
 
-        filePlacementIds.forEach((placementId) => handleRemovePlacedFile(placementId));
-        memberPlacementIds.forEach((placementId) => handleRemovePlacedMember(placementId));
+        const hasRemovableItem =
+            filePlacementIds.size > 0 ||
+            memberPlacementIds.size > 0 ||
+            annotationIds.size > 0 ||
+            groupedAnnotationItemKeysToHide.size > 0;
+        if (!hasRemovableItem) {
+            if (blockedFileCount > 0 || blockedMemberCount > 0) {
+                setNotice({
+                    open: true,
+                    title: t("workspace.notice.deleteFailedTitle"),
+                    message: t("workspace.error.accessDenied"),
+                });
+            }
+            setWorkspaceCanvasMenu(null);
+            return;
+        }
+
+        filePlacementIds.forEach((placementId) =>
+            handleRemovePlacedFile(placementId, { bypassPermissionCheck: true })
+        );
+        memberPlacementIds.forEach((placementId) =>
+            handleRemovePlacedMember(placementId, { bypassPermissionCheck: true })
+        );
         if (groupedAnnotationItemKeysToHide.size > 0) {
             const keys = Array.from(groupedAnnotationItemKeysToHide);
             setHiddenCanvasItemKeys((prev) => Array.from(new Set([...prev, ...keys])));
         }
         annotationIds.forEach((annotationId) => removeAnnotationFromWorkspace(annotationId));
+        if (blockedFileCount > 0 || blockedMemberCount > 0) {
+            setNotice({
+                open: true,
+                title: t("workspace.notice.deleteFailedTitle"),
+                message: t("workspace.error.accessDenied"),
+            });
+        }
 
         setSelectedCanvasItemKeys([]);
         setWorkspaceCanvasMenu(null);
@@ -4192,8 +5170,8 @@ export default function WorkspacePage() {
         const fallbackPosition: "before" | "after" = y > rect.height / 2 ? "after" : "before";
         const position =
             groupEntryReorderHover &&
-            groupEntryReorderHover.groupId === groupId &&
-            groupEntryReorderHover.itemKey === targetItemKey
+                groupEntryReorderHover.groupId === groupId &&
+                groupEntryReorderHover.itemKey === targetItemKey
                 ? groupEntryReorderHover.position
                 : fallbackPosition;
 
@@ -4232,7 +5210,6 @@ export default function WorkspacePage() {
                     : { ...group, itemKeys: filteredKeys };
             })
         );
-        setHiddenCanvasItemKeys((prev) => prev.filter((itemKey) => !keySet.has(itemKey)));
     };
 
     const handleDeleteGroupFromMenu = () => {
@@ -4258,17 +5235,27 @@ export default function WorkspacePage() {
         const targetGroup = workspaceGroups.find((group) => group.id === targetGroupId);
         const targetItemKeys = targetGroup?.itemKeys || [];
         setGroupMenu(null);
+
+        // Hide the group from the canvas, but keep it in the sidebar.
+        setHiddenCanvasGroupIds((prev) => {
+            const next = prev.includes(targetGroupId) ? prev : [...prev, targetGroupId];
+            if (typeof window !== "undefined" && isStorageKeyReady(activeHiddenCanvasGroupsStorageKey)) {
+                window.localStorage.setItem(activeHiddenCanvasGroupsStorageKey, JSON.stringify(next));
+            }
+            return next;
+        });
+
         if (targetItemKeys.length > 0) {
             const targetSet = new Set(targetItemKeys);
             setSelectedCanvasItemKeys((prev) => prev.filter((itemKey) => !targetSet.has(itemKey)));
-        }
-        setHiddenCanvasGroupIds((prev) =>
-            prev.includes(targetGroupId) ? prev : [...prev, targetGroupId]
-        );
-        if (targetItemKeys.length > 0) {
-            setHiddenCanvasItemKeys((prev) =>
-                Array.from(new Set([...prev, ...targetItemKeys]))
-            );
+
+            setHiddenCanvasItemKeys((prev) => {
+                const next = Array.from(new Set([...prev, ...targetItemKeys]));
+                if (typeof window !== "undefined" && isStorageKeyReady(activeHiddenCanvasItemsStorageKey)) {
+                    window.localStorage.setItem(activeHiddenCanvasItemsStorageKey, JSON.stringify(next));
+                }
+                return next;
+            });
         }
     };
 
@@ -4332,13 +5319,13 @@ export default function WorkspacePage() {
 
         const hasOpenMenu = Boolean(
             canvasMenu ||
-                groupMenu ||
-                groupEntryMenu ||
-                fileItemMenu ||
-                canvasFileItemMenu ||
-                profileMenu ||
-                annotationItemMenu ||
-                workspaceCanvasMenu
+            groupMenu ||
+            groupEntryMenu ||
+            fileItemMenu ||
+            canvasFileItemMenu ||
+            profileMenu ||
+            annotationItemMenu ||
+            workspaceCanvasMenu
         );
         if (hasOpenMenu) {
             setCanvasMenu(null);
@@ -4436,17 +5423,17 @@ export default function WorkspacePage() {
         }
 
         const sourceFileId = extractCanvasPlacementSourceId(fileId);
-        const targetFile = modeCanvasFiles.find((file) => file.id === sourceFileId);
+        const targetFile = canvasFileByIdMap.get(sourceFileId);
         const canSendFileFromMenu = Boolean(
             workspaceMode === "my" &&
-                targetFile &&
-                members.some((member) => member.userId !== data?.viewerUserId)
+            targetFile &&
+            members.some((member) => member.userId !== data?.viewerUserId)
         );
         const fileItemKey = buildCanvasItemKey("file", fileId);
         const canUngroupFromMenu = groupedItemKeySet.has(fileItemKey);
         const menuWidth = 172;
         const submenuWidth = 188;
-        const menuHeight = (canUngroupFromMenu ? 120 : 82) + (canSendFileFromMenu ? 34 : 0);
+        const menuHeight = (canUngroupFromMenu ? 154 : 116) + (canSendFileFromMenu ? 34 : 0);
         const gap = 8;
         const x = Math.min(Math.max(event.clientX, gap), window.innerWidth - menuWidth - gap);
         const y = Math.min(Math.max(event.clientY, gap), window.innerHeight - menuHeight - gap);
@@ -4488,8 +5475,16 @@ export default function WorkspacePage() {
         }
         const annotationItemKey = buildCanvasItemKey("annotation", annotationId);
         const canUngroupFromMenu = groupedItemKeySet.has(annotationItemKey);
+        const targetAnnotation = annotations.find((item) => item.id === annotationId);
+        const canLeaveCommentFromMenu = Boolean(targetAnnotation && targetAnnotation.kind !== "comment");
         const menuWidth = 132;
-        const menuHeight = canUngroupFromMenu ? 122 : 88;
+        const menuHeight = canUngroupFromMenu
+            ? canLeaveCommentFromMenu
+                ? 156
+                : 122
+            : canLeaveCommentFromMenu
+                ? 122
+                : 88;
         const gap = 8;
         const x = Math.min(Math.max(event.clientX, gap), window.innerWidth - menuWidth - gap);
         const y = Math.min(Math.max(event.clientY, gap), window.innerHeight - menuHeight - gap);
@@ -4516,13 +5511,30 @@ export default function WorkspacePage() {
         const fileKey = buildCanvasItemKey("file", canvasFileItemMenu.fileId);
         setCanvasFileItemMenu(null);
         removeItemKeysFromAllGroups([fileKey]);
+        setHiddenCanvasItemKeys((prev) => Array.from(new Set([...prev, fileKey])));
     };
 
     const removeCanvasFileItemFromWorkspaceFromMenu = () => {
         if (!canvasFileItemMenu) return;
         const filePlacementId = canvasFileItemMenu.fileId;
+        if (!canViewerRemoveFileFromWorkspace(filePlacementId)) {
+            setCanvasFileItemMenu(null);
+            setNotice({
+                open: true,
+                title: t("workspace.notice.deleteFailedTitle"),
+                message: t("workspace.error.accessDenied"),
+            });
+            return;
+        }
         setCanvasFileItemMenu(null);
-        handleRemovePlacedFile(filePlacementId);
+        handleRemovePlacedFile(filePlacementId, { bypassPermissionCheck: true });
+    };
+
+    const openCanvasFileItemCommentFromMenu = () => {
+        if (!canvasFileItemMenu) return;
+        const fileItemKey = buildCanvasItemKey("file", canvasFileItemMenu.fileId);
+        setCanvasFileItemMenu(null);
+        openItemCommentComposer(fileItemKey);
     };
 
     const moveAnnotationItemToGroupFromMenu = (groupId: string) => {
@@ -4538,6 +5550,16 @@ export default function WorkspacePage() {
         const annotationKey = buildCanvasItemKey("annotation", annotationItemMenu.annotationId);
         setAnnotationItemMenu(null);
         removeItemKeysFromAllGroups([annotationKey]);
+        setHiddenCanvasItemKeys((prev) => Array.from(new Set([...prev, annotationKey])));
+    };
+
+    const openAnnotationItemCommentFromMenu = () => {
+        if (!annotationItemMenu) return;
+        const targetAnnotation = annotations.find((item) => item.id === annotationItemMenu.annotationId);
+        if (!targetAnnotation || targetAnnotation.kind === "comment") return;
+        const annotationKey = buildCanvasItemKey("annotation", annotationItemMenu.annotationId);
+        setAnnotationItemMenu(null);
+        openItemCommentComposer(annotationKey);
     };
 
     const openAnnotationEditor = (annotationId: string) => {
@@ -4557,7 +5579,7 @@ export default function WorkspacePage() {
         const authorName =
             membersForAuthor.find((member) => member.userId === authorUserId)?.username ||
             authorUserId ||
-            "Unknown";
+            t("workspace.unknown");
         const id =
             typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
                 ? crypto.randomUUID()
@@ -4566,7 +5588,7 @@ export default function WorkspacePage() {
         const created: WorkspaceAnnotation = {
             id,
             kind,
-            title: getDefaultAnnotationTitle(kind),
+            title: getDefaultAnnotationTitle(kind, t),
             authorUserId,
             authorName,
             x: workspaceCanvasMenu.canvasX,
@@ -4596,7 +5618,7 @@ export default function WorkspacePage() {
                 if (item.id !== annotationId) return item;
                 const base = String(title ?? "");
                 const nextTitle = finalize
-                    ? base.trim().replace(/\s+/g, " ").slice(0, 40) || getDefaultAnnotationTitle(item.kind)
+                    ? base.trim().replace(/\s+/g, " ").slice(0, 40) || getDefaultAnnotationTitle(item.kind, t)
                     : base.slice(0, 40);
                 return { ...item, title: nextTitle, updatedAt: now };
             })
@@ -4621,7 +5643,9 @@ export default function WorkspacePage() {
         setAnnotations((prev) => prev.filter((item) => item.id !== targetId));
         setActiveAnnotationId((prev) => (prev === targetId ? null : prev));
         setEditingAnnotationTitleId((prev) => (prev === targetId ? null : prev));
+        removeItemCommentsForKeys([targetItemKey]);
         removeItemKeysFromAllGroups([targetItemKey]);
+        setHiddenCanvasItemKeys((prev) => Array.from(new Set([...prev, targetItemKey])));
     };
 
     const handleDeleteAnnotationFromMenu = () => {
@@ -4662,11 +5686,11 @@ export default function WorkspacePage() {
         const requestedCanvasItemKey = String(options?.canvasItemKey || "").trim();
         const existingMemberItemKey = targetMemberSourceId
             ? selectableCanvasItems.find((item) => {
-                  if (item.kind !== "member") return false;
-                  const parsed = parseCanvasItemKey(item.key);
-                  if (!parsed || parsed.kind !== "member") return false;
-                  return extractCanvasPlacementSourceId(parsed.id) === targetMemberSourceId;
-              })?.key || ""
+                if (item.kind !== "member") return false;
+                const parsed = parseCanvasItemKey(item.key);
+                if (!parsed || parsed.kind !== "member") return false;
+                return extractCanvasPlacementSourceId(parsed.id) === targetMemberSourceId;
+            })?.key || ""
             : "";
         const memberCanvasItemKey =
             requestedCanvasItemKey && selectableCanvasItemMap.has(requestedCanvasItemKey)
@@ -4676,6 +5700,9 @@ export default function WorkspacePage() {
         const targetMemberItemKey = memberCanvasItemKey || null;
         const canUngroupFromMenu = Boolean(
             targetMemberItemKey && groupedItemKeySet.has(targetMemberItemKey)
+        );
+        const canLeaveCommentFromMenu = Boolean(
+            targetMemberItemKey && parseCanvasItemKey(targetMemberItemKey)?.kind === "member"
         );
         const canRemoveFromWorkspaceMenu = Boolean(
             targetMemberItemKey && parseCanvasItemKey(targetMemberItemKey)?.kind === "member"
@@ -4687,6 +5714,7 @@ export default function WorkspacePage() {
             44 +
             (canMoveToGroupForMenu ? 34 : 0) +
             (canUngroupFromMenu ? 34 : 0) +
+            (canLeaveCommentFromMenu ? 34 : 0) +
             (canRemoveFromWorkspaceMenu ? 34 : 0) +
             (canManageRoleForMenu ? 34 : 0);
         const gap = 8;
@@ -4764,6 +5792,13 @@ export default function WorkspacePage() {
                     ...prev,
                     [placementId]: placement,
                 }));
+                const viewerUserIdForPlacement = String(data?.viewerUserId || "").trim();
+                if (viewerUserIdForPlacement) {
+                    setCanvasMemberPlacementOwners((prev) => ({
+                        ...prev,
+                        [placementId]: viewerUserIdForPlacement,
+                    }));
+                }
                 nextItemKey = buildCanvasItemKey("member", placementId);
                 setHiddenCanvasItemKeys((prev) =>
                     prev.filter((candidateKey) => candidateKey !== nextItemKey)
@@ -4788,6 +5823,7 @@ export default function WorkspacePage() {
         const itemKey = profileMenu.itemKey;
         setProfileMenu(null);
         removeItemKeysFromAllGroups([itemKey]);
+        setHiddenCanvasItemKeys((prev) => Array.from(new Set([...prev, itemKey])));
     };
 
     const removeProfileItemFromWorkspaceFromMenu = () => {
@@ -4795,18 +5831,32 @@ export default function WorkspacePage() {
         const parsed = parseCanvasItemKey(profileMenu.itemKey);
         if (!parsed || parsed.kind !== "member") return;
         const memberPlacementId = parsed.id;
+        if (!canViewerModifyMemberPlacement(memberPlacementId)) {
+            setProfileMenu(null);
+            setNotice({
+                open: true,
+                title: t("workspace.notice.deleteFailedTitle"),
+                message: t("workspace.error.accessDenied"),
+            });
+            return;
+        }
         setProfileMenu(null);
-        handleRemovePlacedMember(memberPlacementId);
+        handleRemovePlacedMember(memberPlacementId, { bypassPermissionCheck: true });
     };
 
-    const openFilesContextMenu = (event: React.MouseEvent) => {
-        event.preventDefault();
-        event.stopPropagation();
+    const openProfileItemCommentFromMenu = () => {
+        if (!profileMenu?.itemKey) return;
+        const memberItemKey = profileMenu.itemKey;
+        setProfileMenu(null);
+        openItemCommentComposer(memberItemKey);
+    };
+
+    const openFilesActionMenuAt = (clientX: number, clientY: number) => {
         const menuWidth = 176;
         const menuHeight = 122;
         const gap = 8;
-        const x = Math.min(Math.max(event.clientX, gap), window.innerWidth - menuWidth - gap);
-        const y = Math.min(Math.max(event.clientY, gap), window.innerHeight - menuHeight - gap);
+        const x = Math.min(Math.max(clientX, gap), window.innerWidth - menuWidth - gap);
+        const y = Math.min(Math.max(clientY, gap), window.innerHeight - menuHeight - gap);
         setProfileMenu(null);
         setFileItemMenu(null);
         setCanvasFileItemMenu(null);
@@ -4818,22 +5868,40 @@ export default function WorkspacePage() {
         setCanvasMenu({ x, y });
     };
 
+    const openFilesContextMenu = (event: React.MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openFilesActionMenuAt(event.clientX, event.clientY);
+    };
+
+    const openFilesActionMenuFromButton = (event: React.MouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        trackMyTeamAction("myteam.open_files_menu");
+        const rect = event.currentTarget.getBoundingClientRect();
+        openFilesActionMenuAt(rect.left, rect.bottom + 6);
+    };
+
     const openFileItemMenu = (event: React.MouseEvent, fileId: string) => {
         event.preventDefault();
         event.stopPropagation();
         const targetFile = currentFiles.find((file) => file.id === fileId);
         const isFolder = Boolean(targetFile && isFolderEntry(targetFile));
+        const canMoveToFolder = Boolean(targetFile && !isFolder);
         const canSendFileFromMenu = Boolean(
             workspaceMode === "my" &&
-                targetFile &&
-                members.some((member) => member.userId !== data?.viewerUserId)
+            targetFile &&
+            members.some((member) => member.userId !== data?.viewerUserId)
         );
         const menuWidth = 172;
+        const moveSubmenuWidth = 188;
         const submenuWidth = 188;
         const menuHeight = isFolder ? 116 : 188 + (canSendFileFromMenu ? 34 : 0);
         const gap = 8;
         const x = Math.min(Math.max(event.clientX, gap), window.innerWidth - menuWidth - gap);
         const y = Math.min(Math.max(event.clientY, gap), window.innerHeight - menuHeight - gap);
+        const moveSubmenuLeft =
+            canMoveToFolder && x + menuWidth + moveSubmenuWidth + gap > window.innerWidth;
         const shareSubmenuLeft =
             canSendFileFromMenu && x + menuWidth + submenuWidth + gap > window.innerWidth;
         setProfileMenu(null);
@@ -4844,7 +5912,7 @@ export default function WorkspacePage() {
         setAnnotationItemMenu(null);
         setGroupMenu(null);
         setGroupEntryMenu(null);
-        setFileItemMenu({ x, y, fileId, shareSubmenuLeft });
+        setFileItemMenu({ x, y, fileId, moveSubmenuLeft, shareSubmenuLeft });
     };
 
     const handleDeleteFileFromMenu = async () => {
@@ -4862,6 +5930,18 @@ export default function WorkspacePage() {
                 ? selectedFileIds
                 : [targetFileId];
         setFileItemMenu(null);
+
+        if (workspaceMode === "team") {
+            const unauthorized = targetFileIds.some((id) => !canViewerRemoveFileFromWorkspace(id));
+            if (unauthorized) {
+                setNotice({
+                    open: true,
+                    title: t("workspace.notice.deleteFailedTitle"),
+                    message: t("workspace.error.accessDenied"),
+                });
+                return;
+            }
+        }
 
         let successCount = 0;
         let failedCount = 0;
@@ -4895,11 +5975,11 @@ export default function WorkspacePage() {
         if (failedCount > 0) {
             setNotice({
                 open: true,
-                title: "Delete failed",
+                title: t("workspace.notice.deleteFailedTitle"),
                 message:
                     successCount > 0
-                        ? `Deleted ${successCount} item(s); ${failedCount} item(s) could not be deleted.`
-                        : "Unable to delete this item.",
+                        ? t("workspace.notice.deleteFailedPartial", { successCount, failedCount })
+                        : t("workspace.error.deleteItem"),
             });
             return;
         }
@@ -4907,8 +5987,8 @@ export default function WorkspacePage() {
         if (targetFileIds.length > 1) {
             setNotice({
                 open: true,
-                title: "Delete complete",
-                message: `Deleted ${successCount} file(s).`,
+                title: t("workspace.notice.deleteCompleteTitle"),
+                message: t("workspace.notice.deleteCompleteMessage", { successCount }),
             });
         }
     };
@@ -4921,8 +6001,8 @@ export default function WorkspacePage() {
 
         const rawTitle = String(file.title || "").trim();
         const displayName = isFolderEntry(file)
-            ? getFolderDisplayName(rawTitle || "Folder")
-            : rawTitle || "Untitled";
+            ? getFolderLabel(rawTitle || folderLabel)
+            : rawTitle || t("workspace.untitled");
         setFileShareConfirm({
             open: true,
             fileId: file.id,
@@ -4950,7 +6030,7 @@ export default function WorkspacePage() {
         setCanvasFileItemMenu(null);
         setFileShareDrag({
             fileId: file.id,
-            fileName: String(file.title || "").trim() || "Untitled",
+            fileName: String(file.title || "").trim() || t("workspace.untitled"),
             startX: originX,
             startY: originY,
             currentX: event.clientX,
@@ -4975,7 +6055,7 @@ export default function WorkspacePage() {
     const openFileShareFromCanvasMenu = (toUserId: string) => {
         if (!canvasFileItemMenu) return;
         const sourceFileId = extractCanvasPlacementSourceId(canvasFileItemMenu.fileId);
-        const targetFile = modeCanvasFiles.find((file) => file.id === sourceFileId);
+        const targetFile = canvasFileByIdMap.get(sourceFileId);
         setCanvasFileItemMenu(null);
         if (!targetFile || workspaceMode !== "my") return;
         openFileShareConfirm(targetFile, toUserId);
@@ -5020,8 +6100,8 @@ export default function WorkspacePage() {
                 });
                 setNotice({
                     open: true,
-                    title: "File request sent",
-                    message: `Sent a file request to ${fileShareConfirm.toUsername}.`,
+                    title: t("workspace.notice.fileRequestSentTitle"),
+                    message: t("workspace.notice.fileRequestSentMessage", { username: fileShareConfirm.toUsername }),
                 });
                 return;
             }
@@ -5037,15 +6117,15 @@ export default function WorkspacePage() {
 
             setNotice({
                 open: true,
-                title: "File request failed",
-                message: String(payload?.error || "Unable to send the file request."),
+                title: t("workspace.notice.fileRequestFailedTitle"),
+                message: t("workspace.error.fileRequest"),
             });
             setFileShareConfirm((prev) => ({ ...prev, isSubmitting: false }));
         } catch {
             setNotice({
                 open: true,
-                title: "File request failed",
-                message: "Unable to send the file request.",
+                title: t("workspace.notice.fileRequestFailedTitle"),
+                message: t("workspace.error.fileRequest"),
             });
             setFileShareConfirm((prev) => ({ ...prev, isSubmitting: false }));
         }
@@ -5093,16 +6173,10 @@ export default function WorkspacePage() {
             });
 
             if (!res.ok) {
-                let errorMessage = "Unable to change role.";
-                try {
-                    const payload = await res.json();
-                    if (payload?.error) errorMessage = String(payload.error);
-                } catch {
-                    // keep default
-                }
+                const errorMessage = t("workspace.error.roleChange");
                 setNotice({
                     open: true,
-                    title: "Role update failed",
+                    title: t("workspace.notice.roleUpdateFailedTitle"),
                     message: errorMessage,
                 });
                 setRoleChangeConfirm((prev) => ({ ...prev, isSubmitting: false }));
@@ -5125,16 +6199,16 @@ export default function WorkspacePage() {
         } catch {
             setNotice({
                 open: true,
-                title: "Role update failed",
-                message: "Unable to change role.",
+                title: t("workspace.notice.roleUpdateFailedTitle"),
+                message: t("workspace.error.roleChange"),
             });
             setRoleChangeConfirm((prev) => ({ ...prev, isSubmitting: false }));
         }
     };
 
-    if (loading) return <div className="p-8 text-center text-[var(--muted)]">Loading workspace...</div>;
+    if (loading) return <div className="p-8 text-center text-[var(--muted)]">{t("workspace.loading")}</div>;
     if (error) return <div className="p-8 text-center text-rose-500">{error}</div>;
-    if (!data) return <div className="p-8 text-center text-[var(--muted)]">No workspace data.</div>;
+    if (!data) return <div className="p-8 text-center text-[var(--muted)]">{t("workspace.noData")}</div>;
 
     const { team } = data;
     const viewerMember = members.find((member) => member.userId === data.viewerUserId);
@@ -5158,8 +6232,58 @@ export default function WorkspacePage() {
         profileMenu?.itemKey &&
         selectableCanvasItemMap.has(profileMenu.itemKey) &&
         parseCanvasItemKey(profileMenu.itemKey)?.kind === "member" &&
+        canViewerModifyMemberPlacement(parseCanvasItemKey(profileMenu.itemKey)?.id || "") &&
         !groupedItemKeySet.has(profileMenu.itemKey)
     );
+    const canLeaveCommentProfileMenuItem = Boolean(
+        profileMenu?.itemKey &&
+        selectableCanvasItemMap.has(profileMenu.itemKey) &&
+        parseCanvasItemKey(profileMenu.itemKey)?.kind === "member"
+    );
+    const renderItemCommentWidget = (
+        itemKey: string,
+        options?: {
+            rootClassName?: string;
+            buttonClassName?: string;
+            panelClassName?: string;
+        }
+    ) => {
+        if (!canAddCommentToItem(itemKey)) return null;
+        const comments = itemCommentsByKey.get(itemKey) || [];
+        const isOpen = activeItemCommentKey === itemKey;
+        return (
+            <div className={cn("absolute bottom-0.5 left-0.5 z-20", options?.rootClassName)}>
+                <button
+                    type="button"
+                    onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        if (isOpen) {
+                            closeItemCommentComposer();
+                            return;
+                        }
+                        openItemCommentComposer(itemKey);
+                    }}
+                    className={cn(
+                        "relative inline-flex h-5 w-5 items-center justify-center bg-transparent text-sky-400 hover:text-sky-300",
+                        options?.buttonClassName
+                    )}
+                    aria-label={t("workspace.annotation.createComment")}
+                    title={t("workspace.annotation.commentTitle")}
+                >
+                    <MessageCircle className="h-3 w-3" />
+                    {comments.length > 0 && (
+                        <span className="absolute -right-1 -top-1 inline-flex min-w-[14px] items-center justify-center rounded-full bg-[var(--primary)] px-1 text-[9px] font-semibold leading-none text-white">
+                            {comments.length > 99 ? "99+" : comments.length}
+                        </span>
+                    )}
+                </button>
+            </div>
+        );
+    };
     const sortedMembers = [...members].sort((a, b) => {
         const rank = (presence: Presence) => {
             if (presence === "active") return 0;
@@ -5175,7 +6299,7 @@ export default function WorkspacePage() {
             const itemKey = buildCanvasItemKey("file", placementId);
             if (hiddenCanvasItemKeySet.has(itemKey)) return null;
             const sourceFileId = extractCanvasPlacementSourceId(placementId);
-            const file = modeCanvasFiles.find((item) => item.id === sourceFileId);
+            const file = canvasFileByIdMap.get(sourceFileId);
             if (!file) return null;
             return { placementId, sourceFileId, file, position };
         })
@@ -5199,31 +6323,58 @@ export default function WorkspacePage() {
     const fileMenuTarget = fileItemMenu
         ? currentFiles.find((file) => file.id === fileItemMenu.fileId) || null
         : null;
+    const fileMenuCurrentFolderId = String(fileMenuTarget?.folderId || "").trim();
+    const fileMenuMoveFolderOptions = fileMenuTarget
+        ? folderItems.filter((folder) => folder.id !== fileMenuTarget.id)
+        : [];
     const fileMenuTargetIsFolder = Boolean(fileMenuTarget && isFolderEntry(fileMenuTarget));
     const canvasFileMenuSourceId = canvasFileItemMenu
         ? extractCanvasPlacementSourceId(canvasFileItemMenu.fileId)
         : "";
     const canvasFileMenuTarget = canvasFileMenuSourceId
-        ? modeCanvasFiles.find((file) => file.id === canvasFileMenuSourceId) || null
+        ? canvasFileByIdMap.get(canvasFileMenuSourceId) || null
         : null;
     const canSendFileFromSidebarMenu = Boolean(
         workspaceMode === "my" &&
-            fileMenuTarget &&
-            fileShareTargetMembers.length > 0
+        fileMenuTarget &&
+        fileShareTargetMembers.length > 0
     );
     const canSendFileFromCanvasMenu = Boolean(
         workspaceMode === "my" &&
-            canvasFileMenuTarget &&
-            fileShareTargetMembers.length > 0
+        canvasFileMenuTarget &&
+        fileShareTargetMembers.length > 0
     );
     const moveFolderOptions = folderItems.filter((folder) => folder.id !== moveFileModal.fileId);
     const canUngroupCanvasFileItem = Boolean(
         canvasFileItemMenu &&
         groupedItemKeySet.has(buildCanvasItemKey("file", canvasFileItemMenu.fileId))
     );
+    const canRemoveCanvasFileItemFromWorkspace = Boolean(
+        canvasFileItemMenu &&
+        !canUngroupCanvasFileItem &&
+        canViewerRemoveFileFromWorkspace(canvasFileItemMenu.fileId)
+    );
+    const removableSelectedCanvasItems = Array.from(
+        new Set(
+            selectedCanvasItemKeys.filter((itemKey) => {
+                if (!selectableCanvasItemMap.has(itemKey)) return false;
+                const parsed = parseCanvasItemKey(itemKey);
+                if (!parsed) return false;
+                if (parsed.kind === "file") return canViewerRemoveFileFromWorkspace(parsed.id);
+                if (parsed.kind === "member") return canViewerModifyMemberPlacement(parsed.id);
+                return true;
+            })
+        )
+    );
     const canUngroupAnnotationItem = Boolean(
         annotationItemMenu &&
         groupedItemKeySet.has(buildCanvasItemKey("annotation", annotationItemMenu.annotationId))
+    );
+    const annotationMenuTarget = annotationItemMenu
+        ? annotations.find((item) => item.id === annotationItemMenu.annotationId) || null
+        : null;
+    const canLeaveCommentAnnotationItem = Boolean(
+        annotationMenuTarget && annotationMenuTarget.kind !== "comment"
     );
     const canvasSelectionBounds = canvasSelection ? normalizeSelectionBounds(canvasSelection) : null;
     const sidebarSelectionBounds = sidebarSelection ? normalizePointerSelectionBounds(sidebarSelection) : null;
@@ -5301,7 +6452,7 @@ export default function WorkspacePage() {
                             draggingSidebarFileId === file.id && "opacity-55",
                             isSidebarSelected && "bg-[var(--card-bg-hover)] text-[var(--primary)] shadow-[inset_0_0_0_1px_var(--primary)]"
                         )}
-                        title={`${file.title}\nDouble-click to open`}
+                        title={`${file.title}\n${t("workspace.doubleClickToOpen")}`}
                     >
                         <span className="flex items-center gap-2 min-w-0">
                             <File className="h-4 w-4 shrink-0 text-[var(--primary)]" />
@@ -5312,151 +6463,166 @@ export default function WorkspacePage() {
             };
 
             return (
-                <div
-                    ref={filesSidebarSelectionRef}
-                    className="relative min-h-[56vh] flex-1"
-                    onContextMenu={openFilesContextMenu}
-                    onPointerDown={(event) => handleSidebarSelectionPointerDown("files", event)}
-                    onDrop={(event) => {
-                        void handleFilesRootDrop(event);
-                    }}
-                    onDragOver={handleFilesRootDragOver}
-                >
-                    {sidebarSelection?.section === "files" && sidebarSelectionBounds && (
-                        <div
-                            className="pointer-events-none absolute z-20 rounded-sm border border-[var(--primary)]/70 bg-[var(--primary)]/15"
-                            style={{
-                                left: sidebarSelectionBounds.x,
-                                top: sidebarSelectionBounds.y,
-                                width: sidebarSelectionBounds.width,
-                                height: sidebarSelectionBounds.height,
-                            }}
-                        />
-                    )}
-                    {currentFiles.length === 0 ? (
-                        <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-[var(--muted)]">
-                            Right-click to create a file.
-                        </p>
-                    ) : (
-                        <div className="max-h-[66vh] space-y-1 overflow-auto pr-1">
-                            {folderItems.map((folder) => {
-                                const nestedFiles = filesByFolder[folder.id] || [];
-                                const isClosed = Boolean(closedFolders[folder.id]);
-                                const isDropHover = hoveredFolderId === folder.id && isDraggingPlainFile;
-                                const isInlineEditingFolder = inlineRename?.fileId === folder.id;
-                                const isSidebarSelected = selectedSidebarFileIdSet.has(folder.id);
-                                return (
-                                    <div key={folder.id} className="space-y-1">
-                                        <button
-                                            type="button"
-                                            draggable
-                                            data-sidebar-select-item="true"
-                                            data-sidebar-file-id={folder.id}
-                                            data-folder-drop-target="true"
-                                            onDragStart={(event) => handleFileDragStart(event, folder)}
-                                            onDragEnd={handleFileDragEnd}
-                                            onContextMenu={(event) => openFileItemMenu(event, folder.id)}
-                                            onDragOver={(event) => handleFolderDragOver(event, folder.id)}
-                                            onDrop={(event) => {
-                                                void handleFolderDrop(event, folder.id);
-                                            }}
-                                            onClick={() => {
-                                                if (isInlineEditingFolder) return;
-                                                setClosedFolders((prev) => ({
-                                                    ...prev,
-                                                    [folder.id]: !Boolean(prev[folder.id]),
-                                                }));
-                                            }}
-                                            className={cn(
-                                                "w-full cursor-pointer rounded-md border border-transparent px-2 py-1.5 text-left text-sm text-[var(--fg)] transition-colors hover:bg-[var(--card-bg-hover)]",
-                                                isDropHover && "border-[var(--primary)] bg-[var(--card-bg-hover)]",
-                                                isSidebarSelected && "bg-[var(--card-bg-hover)] text-[var(--primary)] shadow-[inset_0_0_0_1px_var(--primary)]"
-                                            )}
-                                            title={folder.title}
-                                        >
-                                            <span className="flex items-center gap-2 min-w-0">
-                                                <ChevronRight
-                                                    className={cn(
-                                                        "h-3.5 w-3.5 shrink-0 text-[var(--muted)] transition-transform",
-                                                        !isClosed && "rotate-90"
-                                                    )}
-                                                />
-                                                <Folder className="h-4 w-4 shrink-0 text-amber-500" />
-                                                {isInlineEditingFolder ? (
-                                                    <input
-                                                        ref={inlineRenameInputRef}
-                                                        value={inlineRename?.name || ""}
-                                                        onClick={(event) => event.stopPropagation()}
-                                                        onChange={(event) =>
-                                                            setInlineRename((prev) =>
-                                                                prev
-                                                                    ? {
-                                                                        ...prev,
-                                                                        name: event.target.value.slice(0, 120),
-                                                                        error: "",
-                                                                    }
-                                                                    : prev
-                                                            )
-                                                        }
-                                                        onBlur={() => {
-                                                            void submitInlineRename();
-                                                        }}
-                                                        onKeyDown={(event) => {
-                                                            if (event.key === "Enter") {
-                                                                event.preventDefault();
-                                                                void submitInlineRename();
-                                                            } else if (event.key === "Escape") {
-                                                                event.preventDefault();
-                                                                cancelInlineRename();
-                                                            }
-                                                        }}
-                                                        className="h-7 w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
+                <div className="flex h-full min-h-0 flex-col">
+                    <div className="mb-2 flex items-center justify-between gap-2 px-1">
+                        <p className="text-[11px] font-medium text-[var(--muted)]">{t("workspace.files")}</p>
+                        <button
+                            type="button"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] text-[var(--fg)] transition-colors hover:bg-[var(--card-bg-hover)]"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={openFilesActionMenuFromButton}
+                            aria-label={t("workspace.fileActions")}
+                            title={t("workspace.fileActions")}
+                        >
+                            <Plus className="h-3.5 w-3.5" />
+                        </button>
+                    </div>
+                    <div
+                        ref={filesSidebarSelectionRef}
+                        className="relative min-h-[56vh] flex-1"
+                        onContextMenu={openFilesContextMenu}
+                        onPointerDown={(event) => handleSidebarSelectionPointerDown("files", event)}
+                        onDrop={(event) => {
+                            void handleFilesRootDrop(event);
+                        }}
+                        onDragOver={handleFilesRootDragOver}
+                    >
+                        {sidebarSelection?.section === "files" && sidebarSelectionBounds && (
+                            <div
+                                className="pointer-events-none absolute z-20 rounded-sm border border-[var(--primary)]/70 bg-[var(--primary)]/15"
+                                style={{
+                                    left: sidebarSelectionBounds.x,
+                                    top: sidebarSelectionBounds.y,
+                                    width: sidebarSelectionBounds.width,
+                                    height: sidebarSelectionBounds.height,
+                                }}
+                            />
+                        )}
+                        {currentFiles.length === 0 ? (
+                            <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-[var(--muted)]">
+                                {t("workspace.rightClickCreateFile")}
+                            </p>
+                        ) : (
+                            <div className="max-h-[66vh] space-y-1 overflow-auto pr-1">
+                                {folderItems.map((folder) => {
+                                    const nestedFiles = filesByFolder[folder.id] || [];
+                                    const isClosed = Boolean(closedFolders[folder.id]);
+                                    const isDropHover = hoveredFolderId === folder.id && isDraggingPlainFile;
+                                    const isInlineEditingFolder = inlineRename?.fileId === folder.id;
+                                    const isSidebarSelected = selectedSidebarFileIdSet.has(folder.id);
+                                    return (
+                                        <div key={folder.id} className="space-y-1">
+                                            <button
+                                                type="button"
+                                                draggable
+                                                data-sidebar-select-item="true"
+                                                data-sidebar-file-id={folder.id}
+                                                data-folder-drop-target="true"
+                                                onDragStart={(event) => handleFileDragStart(event, folder)}
+                                                onDragEnd={handleFileDragEnd}
+                                                onContextMenu={(event) => openFileItemMenu(event, folder.id)}
+                                                onDragOver={(event) => handleFolderDragOver(event, folder.id)}
+                                                onDrop={(event) => {
+                                                    void handleFolderDrop(event, folder.id);
+                                                }}
+                                                onClick={() => {
+                                                    if (isInlineEditingFolder) return;
+                                                    setClosedFolders((prev) => ({
+                                                        ...prev,
+                                                        [folder.id]: !Boolean(prev[folder.id]),
+                                                    }));
+                                                }}
+                                                className={cn(
+                                                    "w-full cursor-pointer rounded-md border border-transparent px-2 py-1.5 text-left text-sm text-[var(--fg)] transition-colors hover:bg-[var(--card-bg-hover)]",
+                                                    isDropHover && "border-[var(--primary)] bg-[var(--card-bg-hover)]",
+                                                    isSidebarSelected && "bg-[var(--card-bg-hover)] text-[var(--primary)] shadow-[inset_0_0_0_1px_var(--primary)]"
+                                                )}
+                                                title={folder.title}
+                                            >
+                                                <span className="flex items-center gap-2 min-w-0">
+                                                    <ChevronRight
+                                                        className={cn(
+                                                            "h-3.5 w-3.5 shrink-0 text-[var(--muted)] transition-transform",
+                                                            !isClosed && "rotate-90"
+                                                        )}
                                                     />
-                                                ) : (
-                                                    <span className="block truncate">{getFolderDisplayName(folder.title)}</span>
-                                                )}
-                                            </span>
-                                        </button>
-                                        {isInlineEditingFolder && inlineRename?.error && (
-                                            <p className="pl-7 text-[10px] text-rose-500">{inlineRename.error}</p>
+                                                    <Folder className="h-4 w-4 shrink-0 text-amber-500" />
+                                                    {isInlineEditingFolder ? (
+                                                        <input
+                                                            ref={inlineRenameInputRef}
+                                                            value={inlineRename?.name || ""}
+                                                            onClick={(event) => event.stopPropagation()}
+                                                            onChange={(event) =>
+                                                                setInlineRename((prev) =>
+                                                                    prev
+                                                                        ? {
+                                                                            ...prev,
+                                                                            name: event.target.value.slice(0, 120),
+                                                                            error: "",
+                                                                        }
+                                                                        : prev
+                                                                )
+                                                            }
+                                                            onBlur={() => {
+                                                                void submitInlineRename();
+                                                            }}
+                                                            onKeyDown={(event) => {
+                                                                if (event.key === "Enter") {
+                                                                    event.preventDefault();
+                                                                    void submitInlineRename();
+                                                                } else if (event.key === "Escape") {
+                                                                    event.preventDefault();
+                                                                    cancelInlineRename();
+                                                                }
+                                                            }}
+                                                            className="h-7 w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
+                                                        />
+                                                    ) : (
+                                                        <span className="block truncate">{getFolderLabel(folder.title)}</span>
+                                                    )}
+                                                </span>
+                                            </button>
+                                            {isInlineEditingFolder && inlineRename?.error && (
+                                                <p className="pl-7 text-[10px] text-rose-500">{inlineRename.error}</p>
+                                            )}
+                                            {isDropHover && (
+                                                <p className="pl-7 text-[10px] font-medium text-[var(--primary)]">
+                                                    {t("workspace.dropFileHere")}
+                                                </p>
+                                            )}
+                                            {!isClosed && (
+                                                <div className="ml-5 space-y-1 border-l border-[var(--border)] pl-2">
+                                                    {nestedFiles.length === 0 ? (
+                                                        <p className="px-2 py-1 text-xs text-[var(--muted)]">{t("workspace.noFiles")}</p>
+                                                    ) : (
+                                                        nestedFiles.map((file) => renderFileItem(file, true))
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+
+                                {rootFiles.length > 0 && (
+                                    <div
+                                        className={cn(
+                                            "space-y-1",
+                                            folderItems.length > 0 && "mt-2 border-t border-[var(--border)] pt-2"
                                         )}
-                                        {isDropHover && (
-                                            <p className="pl-7 text-[10px] font-medium text-[var(--primary)]">
-                                                Drop file here
-                                            </p>
-                                        )}
-                                        {!isClosed && (
-                                            <div className="ml-5 space-y-1 border-l border-[var(--border)] pl-2">
-                                                {nestedFiles.length === 0 ? (
-                                                    <p className="px-2 py-1 text-xs text-[var(--muted)]">No files</p>
-                                                ) : (
-                                                    nestedFiles.map((file) => renderFileItem(file, true))
-                                                )}
-                                            </div>
-                                        )}
+                                    >
+                                        {rootFiles.map((file) => renderFileItem(file))}
                                     </div>
-                                );
-                            })}
+                                )}
 
-                            {rootFiles.length > 0 && (
-                                <div
-                                    className={cn(
-                                        "space-y-1",
-                                        folderItems.length > 0 && "mt-2 border-t border-[var(--border)] pt-2"
-                                    )}
-                                >
-                                    {rootFiles.map((file) => renderFileItem(file))}
-                                </div>
-                            )}
+                                {folderItems.length > 0 && rootFiles.length === 0 && (
+                                    <p className="px-2 py-1 text-xs text-[var(--muted)]">
+                                        {t("workspace.dropToRoot")}
+                                    </p>
+                                )}
 
-                            {folderItems.length > 0 && rootFiles.length === 0 && (
-                                <p className="px-2 py-1 text-xs text-[var(--muted)]">
-                                    Drop files in empty space to move them back to root.
-                                </p>
-                            )}
-
-                        </div>
-                    )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             );
         }
@@ -5465,17 +6631,19 @@ export default function WorkspacePage() {
             return (
                 <div className="flex h-full min-h-0 flex-col">
                     <div className="mb-2 flex items-center justify-between gap-2 px-1">
-                        <p className="text-[11px] font-medium text-[var(--muted)]">Groups</p>
+                        <p className="text-[11px] font-medium text-[var(--muted)]">{t("workspace.groups")}</p>
                         <button
                             type="button"
-                            className="inline-flex items-center rounded-md border border-[var(--border)] px-2 py-1 text-[11px] font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--card-bg-hover)]"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--border)] text-[var(--fg)] transition-colors hover:bg-[var(--card-bg-hover)]"
                             onPointerDown={(event) => event.stopPropagation()}
                             onClick={(event) => {
                                 event.stopPropagation();
                                 createEmptyWorkspaceGroupFromSidebar();
                             }}
+                            aria-label={t("workspace.createGroup")}
+                            title={t("workspace.createGroup")}
                         >
-                            + Create Group
+                            <Plus className="h-3.5 w-3.5" />
                         </button>
                     </div>
                     <div
@@ -5496,282 +6664,272 @@ export default function WorkspacePage() {
                             />
                         )}
                         {resolvedWorkspaceGroups.length === 0 ? (
-                            <div className="absolute inset-0 flex items-center justify-center px-4">
-                                <button
-                                    type="button"
-                                    className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm font-medium text-[var(--fg)] transition-colors hover:bg-[var(--card-bg-hover)]"
-                                    onPointerDown={(event) => event.stopPropagation()}
-                                    onClick={(event) => {
-                                        event.stopPropagation();
-                                        createEmptyWorkspaceGroupFromSidebar();
-                                    }}
-                                >
-                                    Create Group
-                                </button>
-                            </div>
+                            <p className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-[var(--muted)]">
+                                {t("workspace.rightClickCreateGroup")}
+                            </p>
                         ) : (
                             <div className="max-h-[66vh] space-y-1 overflow-auto pr-1">
-                            {resolvedWorkspaceGroups.map((group) => {
-                                const isClosed = Boolean(closedGroups[group.id]);
-                                const isDropHover = hoveredGroupId === group.id;
-                                const isInlineEditingGroup = groupInlineRename?.groupId === group.id;
-                                return (
-                                    <div
-                                        key={group.id}
-                                        data-group-drop-target="true"
-                                        data-group-id={group.id}
-                                        className="space-y-1"
-                                        onContextMenu={(event) => openGroupItemMenu(event, group.id)}
-                                        onDragOver={(event) => handleGroupDragOver(event, group.id)}
-                                        onDragLeave={(event) => handleGroupDragLeave(event, group.id)}
-                                        onDrop={(event) => handleGroupDrop(event, group.id)}
-                                    >
-                                        <button
-                                            type="button"
-                                            draggable={!isInlineEditingGroup}
-                                            onDragStart={(event) => handleGroupDragStart(event, group.id)}
-                                            onDragEnd={handleGroupDragEnd}
-                                            onClick={() =>
-                                                !isInlineEditingGroup &&
-                                                setClosedGroups((prev) => ({
-                                                    ...prev,
-                                                    [group.id]: !Boolean(prev[group.id]),
-                                                }))
-                                            }
-                                            className={cn(
-                                                "w-full cursor-pointer rounded-md border px-2 py-1.5 text-left text-sm text-[var(--fg)] transition-colors hover:bg-[var(--card-bg-hover)]",
-                                                isDropHover
-                                                    ? "border-[var(--primary)] bg-[var(--card-bg-hover)]"
-                                                    : "border-transparent",
-                                                draggingSidebarGroupId === group.id && "opacity-55"
-                                            )}
-                                            title={group.name}
+                                {resolvedWorkspaceGroups.map((group) => {
+                                    const isClosed = Boolean(closedGroups[group.id]);
+                                    const isDropHover = hoveredGroupId === group.id;
+                                    const isInlineEditingGroup = groupInlineRename?.groupId === group.id;
+                                    return (
+                                        <div
+                                            key={group.id}
+                                            data-group-drop-target="true"
+                                            data-group-id={group.id}
+                                            className="space-y-1"
+                                            onContextMenu={(event) => openGroupItemMenu(event, group.id)}
+                                            onDragOver={(event) => handleGroupDragOver(event, group.id)}
+                                            onDragLeave={(event) => handleGroupDragLeave(event, group.id)}
+                                            onDrop={(event) => handleGroupDrop(event, group.id)}
                                         >
-                                            <span className="flex items-center gap-2 min-w-0">
-                                                <ChevronRight
-                                                    className={cn(
-                                                        "h-3.5 w-3.5 shrink-0 text-[var(--muted)] transition-transform",
-                                                        !isClosed && "rotate-90"
-                                                    )}
-                                                />
-                                                <Boxes className="h-4 w-4 shrink-0 text-[var(--primary)]" />
-                                                {isInlineEditingGroup ? (
-                                                    <input
-                                                        ref={groupInlineRenameInputRef}
-                                                        value={groupInlineRename?.name || ""}
-                                                        onPointerDown={(event) => event.stopPropagation()}
-                                                        onClick={(event) => event.stopPropagation()}
-                                                        onChange={(event) =>
-                                                            setGroupInlineRename((prev) =>
-                                                                prev
-                                                                    ? {
-                                                                        ...prev,
-                                                                        name: event.target.value.slice(0, 60),
-                                                                        error: "",
-                                                                    }
-                                                                    : prev
-                                                            )
-                                                        }
-                                                        onBlur={() => submitGroupInlineRename()}
-                                                        onKeyDown={(event) => {
-                                                            if (event.key === "Enter") {
-                                                                event.preventDefault();
-                                                                submitGroupInlineRename();
-                                                                return;
-                                                            }
-                                                            if (event.key === "Escape") {
-                                                                event.preventDefault();
-                                                                cancelGroupInlineRename();
-                                                            }
-                                                        }}
-                                                        className="h-7 flex-1 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2 text-xs text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
-                                                    />
-                                                ) : (
-                                                    <span className="block truncate">{group.name}</span>
+                                            <button
+                                                type="button"
+                                                draggable={!isInlineEditingGroup}
+                                                onDragStart={(event) => handleGroupDragStart(event, group.id)}
+                                                onDragEnd={handleGroupDragEnd}
+                                                onClick={() =>
+                                                    !isInlineEditingGroup &&
+                                                    setClosedGroups((prev) => ({
+                                                        ...prev,
+                                                        [group.id]: !Boolean(prev[group.id]),
+                                                    }))
+                                                }
+                                                className={cn(
+                                                    "w-full cursor-pointer rounded-md border px-2 py-1.5 text-left text-sm text-[var(--fg)] transition-colors hover:bg-[var(--card-bg-hover)]",
+                                                    isDropHover
+                                                        ? "border-[var(--primary)] bg-[var(--card-bg-hover)]"
+                                                        : "border-transparent",
+                                                    draggingSidebarGroupId === group.id && "opacity-55"
                                                 )}
-                                                {!isInlineEditingGroup && (
-                                                    <span className="group relative inline-flex shrink-0 items-center overflow-visible">
-                                                        <span
-                                                            className="inline-flex h-4 w-4 items-center justify-center rounded-full border-2 border-[var(--border)] text-[10px] font-semibold text-[var(--muted)]"
+                                                title={group.name}
+                                            >
+                                                <span className="flex items-center gap-2 min-w-0">
+                                                    <ChevronRight
+                                                        className={cn(
+                                                            "h-3.5 w-3.5 shrink-0 text-[var(--muted)] transition-transform",
+                                                            !isClosed && "rotate-90"
+                                                        )}
+                                                    />
+                                                    <Boxes className="h-4 w-4 shrink-0 text-[var(--primary)]" />
+                                                    {isInlineEditingGroup ? (
+                                                        <input
+                                                            ref={groupInlineRenameInputRef}
+                                                            value={groupInlineRename?.name || ""}
                                                             onPointerDown={(event) => event.stopPropagation()}
                                                             onClick={(event) => event.stopPropagation()}
-                                                            onMouseEnter={(event) => {
-                                                                const rect = event.currentTarget.getBoundingClientRect();
-                                                                setGroupHintTooltip({
-                                                                    x: rect.right + 8,
-                                                                    y: rect.top + rect.height / 2,
-                                                                });
-                                                            }}
-                                                            onMouseMove={(event) => {
-                                                                const rect = event.currentTarget.getBoundingClientRect();
-                                                                setGroupHintTooltip({
-                                                                    x: rect.right + 8,
-                                                                    y: rect.top + rect.height / 2,
-                                                                });
-                                                            }}
-                                                            onMouseLeave={() => setGroupHintTooltip(null)}
-                                                            aria-label="Ctrl drag guide"
-                                                        >
-                                                            !
-                                                        </span>
-                                                        <span className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded border border-[var(--border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] text-[var(--fg)] shadow-md group-hover:block">
-                                                            {GROUP_HINT_TOOLTIP_TEXT}
-                                                        </span>
-                                                    </span>
-                                                )}
-                                                <span className="ml-auto text-[10px] text-[var(--muted)]">
-                                                    {group.items.length}
-                                                </span>
-                                            </span>
-                                        </button>
-                                        {isInlineEditingGroup && groupInlineRename?.error && (
-                                            <p className="pl-7 text-[10px] text-rose-500">{groupInlineRename.error}</p>
-                                        )}
-                                        {isDropHover && (
-                                            <p className="pl-7 text-[10px] font-medium text-[var(--primary)]">
-                                                Hold Ctrl and drop items here
-                                            </p>
-                                        )}
-                                        {!isClosed && (
-                                            <div className="ml-5 space-y-1 border-l border-[var(--border)] pl-2">
-                                                {group.items.length === 0 ? (
-                                                    <p className="px-2 py-1 text-xs text-[var(--muted)]">
-                                                        Empty group
-                                                    </p>
-                                                ) : (
-                                                    group.items.map((item) => {
-                                                        const isReorderSource =
-                                                            groupEntryReorderDrag?.groupId === group.id &&
-                                                            groupEntryReorderDrag.itemKey === item.key;
-                                                        const isSidebarSelected =
-                                                            selectedSidebarGroupItemKeySet.has(item.key);
-                                                        const itemFile =
-                                                            item.kind === "file"
-                                                                ? fileByIdMap.get(item.id) || null
-                                                                : null;
-                                                        const isFolderItem = Boolean(
-                                                            itemFile && isFolderEntry(itemFile)
-                                                        );
-                                                        const folderToggleKey = `${group.id}:${item.key}`;
-                                                        const isFolderOpen =
-                                                            isFolderItem && Boolean(openGroupFolderItems[folderToggleKey]);
-                                                        const folderChildren =
-                                                            isFolderItem && itemFile
-                                                                ? filesByFolder[itemFile.id] || []
-                                                                : [];
-                                                        const itemLabel =
-                                                            isFolderItem && itemFile
-                                                                ? getFolderDisplayName(itemFile.title)
-                                                                : item.label;
-                                                        const reorderHoverPosition =
-                                                            groupEntryReorderHover?.groupId === group.id &&
-                                                            groupEntryReorderHover.itemKey === item.key
-                                                                ? groupEntryReorderHover.position
-                                                                : null;
-                                                        const reorderStyle =
-                                                            reorderHoverPosition === "before"
-                                                                ? ({ boxShadow: "inset 0 2px 0 var(--primary)" } as const)
-                                                                : reorderHoverPosition === "after"
-                                                                    ? ({ boxShadow: "inset 0 -2px 0 var(--primary)" } as const)
-                                                                    : undefined;
-                                                        return (
-                                                            <div key={`${group.id}:${item.key}`} className="space-y-1">
-                                                                <button
-                                                                    type="button"
-                                                                    draggable
-                                                                    data-sidebar-select-item="true"
-                                                                    data-sidebar-group-item-key={item.key}
-                                                                    onDragStart={(event) =>
-                                                                        handleGroupEntryReorderDragStart(event, group.id, item.key)
-                                                                    }
-                                                                    onDragEnd={handleGroupEntryReorderDragEnd}
-                                                                    onDragOver={(event) =>
-                                                                        handleGroupEntryReorderDragOver(event, group.id, item.key)
-                                                                    }
-                                                                    onDragLeave={(event) =>
-                                                                        handleGroupEntryReorderDragLeave(event, group.id, item.key)
-                                                                    }
-                                                                    onDrop={(event) =>
-                                                                        handleGroupEntryReorderDrop(event, group.id, item.key)
-                                                                    }
-                                                                    onClick={() => {
-                                                                        setSelectedCanvasItemKeys([item.key]);
-                                                                        if (isFolderItem) {
-                                                                            setOpenGroupFolderItems((prev) => ({
-                                                                                ...prev,
-                                                                                [folderToggleKey]: !Boolean(prev[folderToggleKey]),
-                                                                            }));
+                                                            onChange={(event) =>
+                                                                setGroupInlineRename((prev) =>
+                                                                    prev
+                                                                        ? {
+                                                                            ...prev,
+                                                                            name: event.target.value.slice(0, 60),
+                                                                            error: "",
                                                                         }
-                                                                    }}
-                                                                    onContextMenu={(event) =>
-                                                                        openGroupEntryItemMenu(event, group.id, item.key)
-                                                                    }
-                                                                    className={cn(
-                                                                        "w-full rounded-md px-2 py-1 text-left text-xs text-[var(--fg)] hover:bg-[var(--card-bg-hover)]",
-                                                                        selectedCanvasItemKeySet.has(item.key) &&
+                                                                        : prev
+                                                                )
+                                                            }
+                                                            onBlur={() => submitGroupInlineRename()}
+                                                            onKeyDown={(event) => {
+                                                                if (event.key === "Enter") {
+                                                                    event.preventDefault();
+                                                                    submitGroupInlineRename();
+                                                                    return;
+                                                                }
+                                                                if (event.key === "Escape") {
+                                                                    event.preventDefault();
+                                                                    cancelGroupInlineRename();
+                                                                }
+                                                            }}
+                                                            className="h-7 flex-1 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2 text-xs text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
+                                                        />
+                                                    ) : (
+                                                        <span className="block truncate">{group.name}</span>
+                                                    )}
+                                                    {!isInlineEditingGroup && (
+                                                        <span className="group relative inline-flex shrink-0 items-center overflow-visible">
+                                                            <span
+                                                                className="inline-flex h-4 w-4 items-center justify-center rounded-full border-2 border-[var(--border)] text-[10px] font-semibold text-[var(--muted)]"
+                                                                onPointerDown={(event) => event.stopPropagation()}
+                                                                onClick={(event) => event.stopPropagation()}
+                                                                onMouseEnter={(event) => {
+                                                                    const rect = event.currentTarget.getBoundingClientRect();
+                                                                    setGroupHintTooltip({
+                                                                        x: rect.right + 8,
+                                                                        y: rect.top + rect.height / 2,
+                                                                    });
+                                                                }}
+                                                                onMouseMove={(event) => {
+                                                                    const rect = event.currentTarget.getBoundingClientRect();
+                                                                    setGroupHintTooltip({
+                                                                        x: rect.right + 8,
+                                                                        y: rect.top + rect.height / 2,
+                                                                    });
+                                                                }}
+                                                                onMouseLeave={() => setGroupHintTooltip(null)}
+                                                                aria-label={t("workspace.ctrlDragGuideAria")}
+                                                            >
+                                                                !
+                                                            </span>
+                                                            <span className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded border border-[var(--border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] text-[var(--fg)] shadow-md group-hover:block">
+                                                                {groupHintTooltipText}
+                                                            </span>
+                                                        </span>
+                                                    )}
+                                                    <span className="ml-auto text-[10px] text-[var(--muted)]">
+                                                        {group.items.length}
+                                                    </span>
+                                                </span>
+                                            </button>
+                                            {isInlineEditingGroup && groupInlineRename?.error && (
+                                                <p className="pl-7 text-[10px] text-rose-500">{groupInlineRename.error}</p>
+                                            )}
+                                            {isDropHover && (
+                                                <p className="pl-7 text-[10px] font-medium text-[var(--primary)]">
+                                                    {t("workspace.holdCtrlDrop")}
+                                                </p>
+                                            )}
+                                            {!isClosed && (
+                                                <div className="ml-5 space-y-1 border-l border-[var(--border)] pl-2">
+                                                    {group.items.length === 0 ? (
+                                                        <p className="px-2 py-1 text-xs text-[var(--muted)]">
+                                                            {t("workspace.emptyGroup")}
+                                                        </p>
+                                                    ) : (
+                                                        group.items.map((item) => {
+                                                            const isReorderSource =
+                                                                groupEntryReorderDrag?.groupId === group.id &&
+                                                                groupEntryReorderDrag.itemKey === item.key;
+                                                            const isSidebarSelected =
+                                                                selectedSidebarGroupItemKeySet.has(item.key);
+                                                            const itemFile =
+                                                                item.kind === "file"
+                                                                    ? canvasFileByIdMap.get(item.id) || fileByIdMap.get(item.id) || null
+                                                                    : null;
+                                                            const isFolderItem = Boolean(
+                                                                itemFile && isFolderEntry(itemFile)
+                                                            );
+                                                            const folderToggleKey = `${group.id}:${item.key}`;
+                                                            const isFolderOpen =
+                                                                isFolderItem && Boolean(openGroupFolderItems[folderToggleKey]);
+                                                            const folderChildren =
+                                                                isFolderItem && itemFile
+                                                                    ? canvasFilesByFolder[itemFile.id] || filesByFolder[itemFile.id] || []
+                                                                    : [];
+                                                            const itemLabel =
+                                                                isFolderItem && itemFile
+                                                                    ? getFolderLabel(itemFile.title)
+                                                                    : item.label;
+                                                            const reorderHoverPosition =
+                                                                groupEntryReorderHover?.groupId === group.id &&
+                                                                    groupEntryReorderHover.itemKey === item.key
+                                                                    ? groupEntryReorderHover.position
+                                                                    : null;
+                                                            const reorderStyle =
+                                                                reorderHoverPosition === "before"
+                                                                    ? ({ boxShadow: "inset 0 2px 0 var(--primary)" } as const)
+                                                                    : reorderHoverPosition === "after"
+                                                                        ? ({ boxShadow: "inset 0 -2px 0 var(--primary)" } as const)
+                                                                        : undefined;
+                                                            return (
+                                                                <div key={`${group.id}:${item.key}`} className="space-y-1">
+                                                                    <button
+                                                                        type="button"
+                                                                        draggable
+                                                                        data-sidebar-select-item="true"
+                                                                        data-sidebar-group-item-key={item.key}
+                                                                        onDragStart={(event) =>
+                                                                            handleGroupEntryReorderDragStart(event, group.id, item.key)
+                                                                        }
+                                                                        onDragEnd={handleGroupEntryReorderDragEnd}
+                                                                        onDragOver={(event) =>
+                                                                            handleGroupEntryReorderDragOver(event, group.id, item.key)
+                                                                        }
+                                                                        onDragLeave={(event) =>
+                                                                            handleGroupEntryReorderDragLeave(event, group.id, item.key)
+                                                                        }
+                                                                        onDrop={(event) =>
+                                                                            handleGroupEntryReorderDrop(event, group.id, item.key)
+                                                                        }
+                                                                        onClick={() => {
+                                                                            setSelectedCanvasItemKeys([item.key]);
+                                                                            if (isFolderItem) {
+                                                                                setOpenGroupFolderItems((prev) => ({
+                                                                                    ...prev,
+                                                                                    [folderToggleKey]: !Boolean(prev[folderToggleKey]),
+                                                                                }));
+                                                                            }
+                                                                        }}
+                                                                        onContextMenu={(event) =>
+                                                                            openGroupEntryItemMenu(event, group.id, item.key)
+                                                                        }
+                                                                        className={cn(
+                                                                            "w-full rounded-md px-2 py-1 text-left text-xs text-[var(--fg)] hover:bg-[var(--card-bg-hover)]",
+                                                                            selectedCanvasItemKeySet.has(item.key) &&
                                                                             "bg-[var(--card-bg-hover)] text-[var(--primary)]",
-                                                                        isSidebarSelected &&
+                                                                            isSidebarSelected &&
                                                                             "bg-[var(--card-bg-hover)] text-[var(--primary)] shadow-[inset_0_0_0_1px_var(--primary)]",
-                                                                        isReorderSource && "opacity-45"
-                                                                    )}
-                                                                    style={reorderStyle}
-                                                                    title={itemLabel}
-                                                                >
-                                                                    <span className="flex items-center gap-1.5 min-w-0">
-                                                                        {isFolderItem ? (
-                                                                            <>
-                                                                                <ChevronRight
-                                                                                    className={cn(
-                                                                                        "h-3.5 w-3.5 shrink-0 text-[var(--muted)] transition-transform",
-                                                                                        isFolderOpen && "rotate-90"
+                                                                            isReorderSource && "opacity-45"
+                                                                        )}
+                                                                        style={reorderStyle}
+                                                                        title={itemLabel}
+                                                                    >
+                                                                        <span className="flex items-center gap-1.5 min-w-0">
+                                                                            {isFolderItem ? (
+                                                                                <>
+                                                                                    <ChevronRight
+                                                                                        className={cn(
+                                                                                            "h-3.5 w-3.5 shrink-0 text-[var(--muted)] transition-transform",
+                                                                                            isFolderOpen && "rotate-90"
+                                                                                        )}
+                                                                                    />
+                                                                                    {isFolderOpen ? (
+                                                                                        <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                                                                                    ) : (
+                                                                                        <Folder className="h-3.5 w-3.5 shrink-0 text-amber-500" />
                                                                                     )}
-                                                                                />
-                                                                                {isFolderOpen ? (
-                                                                                    <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-                                                                                ) : (
-                                                                                    <Folder className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-                                                                                )}
-                                                                            </>
-                                                                        ) : item.kind === "file" ? (
-                                                                            <File className="h-3.5 w-3.5 shrink-0 text-[var(--primary)]" />
-                                                                        ) : item.kind === "member" ? (
-                                                                            <UserRound className="h-3.5 w-3.5 shrink-0 text-sky-500" />
-                                                                        ) : (
-                                                                            <MessageCircle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-                                                                        )}
-                                                                        <span className="block truncate">{itemLabel}</span>
-                                                                    </span>
-                                                                </button>
-                                                                {isFolderItem && isFolderOpen && (
-                                                                    <div className="ml-4 space-y-0.5 border-l border-[var(--border)] pl-2">
-                                                                        {folderChildren.length === 0 ? (
-                                                                            <p className="px-1 py-0.5 text-[10px] text-[var(--muted)]">
-                                                                                No files
-                                                                            </p>
-                                                                        ) : (
-                                                                            folderChildren.map((child) => (
-                                                                                <button
-                                                                                    key={child.id}
-                                                                                    type="button"
-                                                                                    onClick={() => openWorkspaceFile(child)}
-                                                                                    className="w-full truncate rounded px-1.5 py-1 text-left text-[11px] text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                                                                                    title={child.title}
-                                                                                >
-                                                                                    {child.title}
-                                                                                </button>
-                                                                            ))
-                                                                        )}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    })
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
+                                                                                </>
+                                                                            ) : item.kind === "file" ? (
+                                                                                <File className="h-3.5 w-3.5 shrink-0 text-[var(--primary)]" />
+                                                                            ) : item.kind === "member" ? (
+                                                                                <UserRound className="h-3.5 w-3.5 shrink-0 text-sky-500" />
+                                                                            ) : (
+                                                                                <MessageCircle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                                                                            )}
+                                                                            <span className="block truncate">{itemLabel}</span>
+                                                                        </span>
+                                                                    </button>
+                                                                    {isFolderItem && isFolderOpen && (
+                                                                        <div className="ml-4 space-y-0.5 border-l border-[var(--border)] pl-2">
+                                                                            {folderChildren.length === 0 ? (
+                                                                                <p className="px-1 py-0.5 text-[10px] text-[var(--muted)]">
+                                                                                    {t("workspace.noFiles")}
+                                                                                </p>
+                                                                            ) : (
+                                                                                folderChildren.map((child) => (
+                                                                                    <button
+                                                                                        key={child.id}
+                                                                                        type="button"
+                                                                                        onClick={() => openWorkspaceFile(child)}
+                                                                                        className="w-full truncate rounded px-1.5 py-1 text-left text-[11px] text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                                                                        title={child.title}
+                                                                                    >
+                                                                                        {child.title}
+                                                                                    </button>
+                                                                                ))
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
@@ -5783,15 +6941,15 @@ export default function WorkspacePage() {
             <div className="space-y-2">
                 <div className="space-y-1 max-h-[66vh] overflow-auto pr-1">
                     {sortedMembers.length === 0 ? (
-                        <p className="text-sm text-[var(--muted)]">No members yet.</p>
+                        <p className="text-sm text-[var(--muted)]">{t("workspace.noMembersYet")}</p>
                     ) : (
                         sortedMembers.map((member) => {
                             const presence = resolvePresence(member.status);
                             const isMe = Boolean(data.viewerUserId) && member.userId === data.viewerUserId;
                             const isShareHover = Boolean(
                                 fileShareDrag &&
-                                    fileShareDrag.hoverUserId === member.userId &&
-                                    member.userId !== data.viewerUserId
+                                fileShareDrag.hoverUserId === member.userId &&
+                                member.userId !== data.viewerUserId
                             );
                             const dotClass =
                                 presence === "active"
@@ -5829,11 +6987,11 @@ export default function WorkspacePage() {
                                                 </p>
                                                 {isMe && (
                                                     <span className="shrink-0 rounded-full border border-[var(--primary)] px-1.5 py-0.5 text-[9px] font-semibold uppercase text-[var(--primary)]">
-                                                        My
+                                                        {t("workspace.my")}
                                                     </span>
                                                 )}
                                             </div>
-                                            <p className="text-[10px] text-[var(--muted)]">{member.role}</p>
+                                            <p className="text-[10px] text-[var(--muted)]">{getRoleLabel(member.role)}</p>
                                         </div>
                                         {!isMe && (
                                             <button
@@ -5847,7 +7005,7 @@ export default function WorkspacePage() {
                                                     openMemberChat(member);
                                                 }}
                                                 className="h-7 w-7 shrink-0 rounded-md border border-[var(--border)] bg-[var(--card-bg-hover)] inline-flex items-center justify-center text-[var(--fg)] hover:text-[var(--primary)]"
-                                                aria-label={`Chat with ${member.username || member.userId}`}
+                                                aria-label={t("workspace.chatWith", { username: member.username || member.userId })}
                                             >
                                                 <MessageSquare className="w-3.5 h-3.5" />
                                             </button>
@@ -5888,8 +7046,8 @@ export default function WorkspacePage() {
                                                 ? "border-[var(--primary)] bg-[var(--card-bg-hover)] text-[var(--fg)]"
                                                 : "border-transparent text-[var(--muted)] hover:bg-[var(--card-bg-hover)] hover:text-[var(--fg)]"
                                         )}
-                                        title="Members"
-                                        aria-label="Members"
+                                        title={t("workspace.members")}
+                                        aria-label={t("workspace.members")}
                                     >
                                         <UserRound className="h-4 w-4" />
                                     </button>
@@ -5905,8 +7063,8 @@ export default function WorkspacePage() {
                                                 ? "border-[var(--primary)] bg-[var(--card-bg-hover)] text-[var(--fg)]"
                                                 : "border-transparent text-[var(--muted)] hover:bg-[var(--card-bg-hover)] hover:text-[var(--fg)]"
                                         )}
-                                        title="Files"
-                                        aria-label="Files"
+                                        title={t("workspace.files")}
+                                        aria-label={t("workspace.files")}
                                     >
                                         <File className="h-4 w-4" />
                                     </button>
@@ -5922,8 +7080,8 @@ export default function WorkspacePage() {
                                                 ? "border-[var(--primary)] bg-[var(--card-bg-hover)] text-[var(--fg)]"
                                                 : "border-transparent text-[var(--muted)] hover:bg-[var(--card-bg-hover)] hover:text-[var(--fg)]"
                                         )}
-                                        title="Groups"
-                                        aria-label="Groups"
+                                        title={t("workspace.groups")}
+                                        aria-label={t("workspace.groups")}
                                     >
                                         <Boxes className="h-4 w-4" />
                                     </button>
@@ -5942,10 +7100,10 @@ export default function WorkspacePage() {
                                 </div>
                                 <p className="text-xs text-[var(--muted)]">
                                     {activeSection === "members"
-                                        ? "My Members"
+                                        ? t("workspace.members")
                                         : activeSection === "files"
-                                            ? "My Files"
-                                            : "My Groups"}
+                                            ? t("workspace.files")
+                                            : t("workspace.groups")}
                                 </p>
                                 <div className="mt-3 pt-3 border-t border-[var(--border)] flex-1 overflow-auto">
                                     {renderSidebarContent()}
@@ -5965,7 +7123,7 @@ export default function WorkspacePage() {
                         ? "left-[calc(20rem-1px)] border-l-0"
                         : "left-0"
                 )}
-                aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+                aria-label={isSidebarOpen ? t("workspace.closeSidebar") : t("workspace.openSidebar")}
             >
                 {isSidebarOpen ? <ChevronLeft className="mx-auto h-4 w-4" /> : <ChevronRight className="mx-auto h-4 w-4" />}
             </button>
@@ -5974,9 +7132,9 @@ export default function WorkspacePage() {
                 <div className="shrink-0 border-b border-[var(--border)] bg-[var(--card-bg)]/80 px-4 py-2 backdrop-blur-sm">
                     <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold text-[var(--fg)]">Workspace Canvas</p>
+                            <p className="truncate text-sm font-semibold text-[var(--fg)]">{t("workspace.canvasTitle")}</p>
                             <p className="truncate text-[11px] text-[var(--muted)]">
-                                This mode switch affects the canvas only. Left sidebar lists are always your own.
+                                {t("workspace.canvasModeHint")}
                             </p>
                         </div>
                         <div className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--card-bg)] p-0.5">
@@ -5993,7 +7151,7 @@ export default function WorkspacePage() {
                                         : "text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                 )}
                             >
-                                My Canvas
+                                {t("workspace.myCanvas")}
                             </button>
                             <button
                                 type="button"
@@ -6008,7 +7166,7 @@ export default function WorkspacePage() {
                                         : "text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                 )}
                             >
-                                Team Canvas
+                                {t("workspace.teamCanvas")}
                             </button>
                         </div>
                     </div>
@@ -6052,7 +7210,7 @@ export default function WorkspacePage() {
                                 onPointerDown={(event) => beginGroupDragFromLabel(event, outline.id)}
                                 onContextMenu={(event) => openCanvasGroupItemMenu(event, outline.id)}
                                 className="pointer-events-auto absolute -top-2 left-3 cursor-grab select-none rounded-sm border border-[var(--primary)]/45 bg-[var(--card-bg)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--primary)] active:cursor-grabbing"
-                                title="Drag to move group"
+                                title={t("workspace.dragToMoveGroup")}
                             >
                                 {outline.name}
                             </button>
@@ -6061,7 +7219,7 @@ export default function WorkspacePage() {
 
                     {placedFiles.length === 0 && placedMembers.length === 0 && (
                         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                            <p className="text-sm text-[var(--muted)]">Drag file or member items from the left panel and drop them here.</p>
+                            <p className="text-sm text-[var(--muted)]">{t("workspace.canvasEmptyHint")}</p>
                         </div>
                     )}
 
@@ -6069,9 +7227,10 @@ export default function WorkspacePage() {
                         const isFolder = isFolderEntry(file);
                         const isFolderOpen = isFolder && Boolean(openCanvasFolders[file.id]);
                         const folderChildren = isFolder ? canvasFilesByFolder[file.id] || [] : [];
-                        const displayTitle = isFolder ? getFolderDisplayName(file.title) : file.title;
+                        const displayTitle = isFolder ? getFolderLabel(file.title) : file.title;
                         const fileItemKey = buildCanvasItemKey("file", placementId);
                         const isSelected = selectedCanvasItemKeySet.has(fileItemKey);
+                        const canModifyPlacedFile = canViewerRemoveFileFromWorkspace(placementId);
                         return (
                             <div
                                 key={placementId}
@@ -6089,36 +7248,42 @@ export default function WorkspacePage() {
                                     openWorkspaceFile(file);
                                 }}
                                 className={cn(
-                                    "absolute w-28 rounded-md border hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)] active:cursor-grabbing cursor-grab p-2 text-left select-none",
+                                    "absolute w-28 rounded-md border hover:border-[var(--border)] hover:bg-[var(--card-bg-hover)] p-2 text-left select-none",
+                                    canModifyPlacedFile ? "cursor-grab active:cursor-grabbing" : "cursor-default",
                                     isSelected
                                         ? "border-[var(--primary)] bg-[var(--card-bg-hover)] shadow-[0_0_0_1px_var(--primary)]"
                                         : "border-transparent"
                                 )}
                                 style={{ left: position.x, top: position.y }}
                             >
-                                <button
-                                    type="button"
-                                    onPointerDown={(event) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                    }}
-                                    onClick={(event) => {
-                                        event.stopPropagation();
-                                        handleRemovePlacedFile(placementId);
-                                    }}
-                                    className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-sm bg-transparent text-[var(--muted)] hover:text-rose-500"
-                                    aria-label={`Remove ${displayTitle}`}
-                                    title="Remove from Workspace"
-                                >
-                                    <X className="h-3.5 w-3.5" />
-                                </button>
+                                <span className="absolute -top-3.5 left-0 z-10 max-w-[100px] truncate px-1 text-[9px] font-medium text-[var(--muted)] shadow-sm rounded-sm bg-[var(--card-bg)] border border-[var(--border)]">
+                                    {members.find((m) => m.userId === file.ownerUserId)?.username || t("workspace.unknownUser")}
+                                </span>
+                                {canModifyPlacedFile && (
+                                    <button
+                                        type="button"
+                                        onPointerDown={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                        }}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            handleRemovePlacedFile(placementId);
+                                        }}
+                                        className="absolute right-1 top-1 z-10 inline-flex h-5 w-5 items-center justify-center rounded-sm bg-transparent text-[var(--muted)] hover:text-rose-500 hover:bg-[var(--card-bg-hover)]"
+                                        aria-label={t("workspace.removeItem", { title: displayTitle })}
+                                        title={t("workspace.removeFromWorkspace")}
+                                    >
+                                        <X className="h-3.5 w-3.5" />
+                                    </button>
+                                )}
                                 {workspaceMode === "my" && fileShareTargetMembers.length > 0 && (
                                     <button
                                         type="button"
                                         onPointerDown={(event) => beginFileShareDrag(event, file)}
                                         className="absolute -left-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--card-bg)] text-[var(--fg)] shadow-sm hover:border-[var(--primary)] hover:text-[var(--primary)]"
-                                        aria-label={`Share ${displayTitle}`}
-                                        title="Send File"
+                                        aria-label={t("workspace.shareItem", { title: displayTitle })}
+                                        title={t("workspace.sendFile")}
                                     >
                                         <Plus className="h-3.5 w-3.5" />
                                     </button>
@@ -6135,12 +7300,16 @@ export default function WorkspacePage() {
                                             }));
                                         }}
                                         className="absolute left-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-sm text-[var(--muted)] hover:bg-[var(--card-bg-hover)] hover:text-[var(--fg)]"
-                                        aria-label={isFolderOpen ? `Close ${displayTitle}` : `Open ${displayTitle}`}
+                                        aria-label={
+                                            isFolderOpen
+                                                ? t("workspace.closeItem", { title: displayTitle })
+                                                : t("workspace.openItem", { title: displayTitle })
+                                        }
                                     >
                                         <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", isFolderOpen && "rotate-90")} />
                                     </button>
                                 )}
-                                <div className="flex flex-col items-center gap-1.5">
+                                <div className="flex flex-col items-center gap-1.5 mt-2">
                                     {isFolder ? (
                                         isFolderOpen ? (
                                             <FolderOpen className="w-8 h-8 text-amber-500" />
@@ -6153,7 +7322,7 @@ export default function WorkspacePage() {
                                     <p className="w-full text-center text-xs text-[var(--fg)] truncate">{displayTitle}</p>
                                     <p className="text-[10px] text-[var(--muted)]">
                                         {isFolder
-                                            ? `${folderChildren.length} items`
+                                            ? t("workspace.items", { count: folderChildren.length })
                                             : file.createdAt
                                                 ? new Date(file.createdAt).toLocaleDateString()
                                                 : ""}
@@ -6161,9 +7330,9 @@ export default function WorkspacePage() {
                                 </div>
                                 {isFolder && isFolderOpen && (
                                     <div className="absolute left-full top-0 ml-2 w-56 rounded-md border border-[var(--border)] bg-[var(--card-bg)] p-1.5 shadow-md">
-                                        <p className="mb-1 px-1 text-[10px] text-[var(--muted)]">Folder</p>
+                                        <p className="mb-1 px-1 text-[10px] text-[var(--muted)]">{t("workspace.folder")}</p>
                                         {folderChildren.length === 0 ? (
-                                            <p className="px-1 py-1 text-xs text-[var(--muted)]">No files</p>
+                                            <p className="px-1 py-1 text-xs text-[var(--muted)]">{t("workspace.noFiles")}</p>
                                         ) : (
                                             <div className="max-h-40 space-y-0.5 overflow-auto">
                                                 {folderChildren.map((child) => (
@@ -6185,11 +7354,13 @@ export default function WorkspacePage() {
                                         )}
                                     </div>
                                 )}
+                                {renderItemCommentWidget(fileItemKey)}
                             </div>
                         );
                     })}
 
                     {placedMembers.map(({ placementId, member, position, width }) => {
+                        const memberItemKey = buildCanvasItemKey("member", placementId);
                         const presence = resolvePresence(member.status);
                         const dotClass =
                             presence === "active"
@@ -6200,10 +7371,11 @@ export default function WorkspacePage() {
                         const isMe = Boolean(data.viewerUserId) && member.userId === data.viewerUserId;
                         const isShareHover = Boolean(
                             fileShareDrag &&
-                                fileShareDrag.hoverUserId === member.userId &&
-                                member.userId !== data.viewerUserId
+                            fileShareDrag.hoverUserId === member.userId &&
+                            member.userId !== data.viewerUserId
                         );
-                        const isSelected = selectedCanvasItemKeySet.has(buildCanvasItemKey("member", placementId));
+                        const isSelected = selectedCanvasItemKeySet.has(memberItemKey);
+                        const canModifyMemberPlacement = canViewerModifyMemberPlacement(placementId);
 
                         return (
                             <div
@@ -6215,11 +7387,12 @@ export default function WorkspacePage() {
                                 onPointerDown={(event) => handlePlacedMemberPointerDown(event, placementId, position)}
                                 onContextMenu={(event) =>
                                     openProfileMenu(event, member.userId, {
-                                        canvasItemKey: buildCanvasItemKey("member", placementId),
+                                        canvasItemKey: memberItemKey,
                                     })
                                 }
                                 className={cn(
-                                    "absolute rounded-md border bg-[var(--card-bg)] hover:bg-[var(--card-bg-hover)] active:cursor-grabbing cursor-grab px-2 py-1 text-left select-none shadow-sm",
+                                    "absolute rounded-md border bg-[var(--card-bg)] hover:bg-[var(--card-bg-hover)] px-2 py-1 text-left select-none shadow-sm",
+                                    canModifyMemberPlacement ? "cursor-grab active:cursor-grabbing" : "cursor-default",
                                     isSelected
                                         ? "border-[var(--primary)] shadow-[0_0_0_1px_var(--primary)]"
                                         : "border-[var(--border)]",
@@ -6227,22 +7400,24 @@ export default function WorkspacePage() {
                                 )}
                                 style={{ left: position.x, top: position.y, width, height: CANVAS_MEMBER_HEIGHT }}
                             >
-                                <button
-                                    type="button"
-                                    onPointerDown={(event) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                    }}
-                                    onClick={(event) => {
-                                        event.stopPropagation();
-                                        handleRemovePlacedMember(placementId);
-                                    }}
-                                    className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-sm bg-transparent text-[var(--muted)] hover:text-rose-500"
-                                    aria-label={`Remove ${member.username || member.userId}`}
-                                    title="Remove from Workspace"
-                                >
-                                    <X className="h-3.5 w-3.5" />
-                                </button>
+                                {canModifyMemberPlacement && (
+                                    <button
+                                        type="button"
+                                        onPointerDown={(event) => {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                        }}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            handleRemovePlacedMember(placementId, { bypassPermissionCheck: true });
+                                        }}
+                                        className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-sm bg-transparent text-[var(--muted)] hover:text-rose-500"
+                                        aria-label={t("workspace.removeItem", { title: member.username || member.userId })}
+                                        title={t("workspace.removeFromWorkspace")}
+                                    >
+                                        <X className="h-3.5 w-3.5" />
+                                    </button>
+                                )}
                                 {!isMe && (
                                     <button
                                         type="button"
@@ -6255,7 +7430,7 @@ export default function WorkspacePage() {
                                             openMemberChat(member);
                                         }}
                                         className="absolute right-1 bottom-1 inline-flex h-5 w-5 items-center justify-center rounded-sm border border-[var(--border)] bg-[var(--card-bg-hover)] text-[var(--fg)] hover:text-[var(--primary)]"
-                                        aria-label={`Chat with ${member.username || member.userId}`}
+                                        aria-label={t("workspace.chatWith", { username: member.username || member.userId })}
                                     >
                                         <MessageSquare className="h-3.5 w-3.5" />
                                     </button>
@@ -6270,13 +7445,14 @@ export default function WorkspacePage() {
                                             <p className="text-sm font-medium text-[var(--fg)] whitespace-nowrap">{member.username || member.userId}</p>
                                             {isMe && (
                                                 <span className="shrink-0 rounded-full border border-[var(--primary)] px-1.5 py-0.5 text-[9px] font-semibold uppercase text-[var(--primary)]">
-                                                    My
+                                                    {t("workspace.my")}
                                                 </span>
                                             )}
                                         </div>
-                                        <p className="text-[10px] text-[var(--muted)]">{member.role}</p>
+                                        <p className="text-[10px] text-[var(--muted)]">{getRoleLabel(member.role)}</p>
                                     </div>
                                 </div>
+                                {renderItemCommentWidget(memberItemKey)}
                             </div>
                         );
                     })}
@@ -6288,223 +7464,253 @@ export default function WorkspacePage() {
                                 !hiddenCanvasItemKeySet.has(buildCanvasItemKey("annotation", annotation.id))
                         )
                         .map((annotation) => {
-                        const isComment = annotation.kind === "comment";
-                        const isExpanded = activeAnnotationId === annotation.id;
-                        const isSelected = selectedCanvasItemKeySet.has(buildCanvasItemKey("annotation", annotation.id));
-                        return (
-                            <div
-                                key={annotation.id}
-                                data-workspace-annotation="true"
-                                onPointerDown={(event) => event.stopPropagation()}
-                                onContextMenu={(event) => openAnnotationItemMenu(event, annotation.id)}
-                                className={cn(
-                                    "absolute z-10",
-                                    isSelected && "ring-2 ring-[var(--primary)]/70 rounded-xl",
-                                    isExpanded
-                                        ? cn(
-                                              "w-[340px] max-w-[68vw] rounded-xl border shadow-md",
-                                              isComment
-                                                  ? "border-sky-500/45 bg-[color:rgb(15_23_42_/_0.95)]"
-                                                  : "border-amber-500/45 bg-[color:rgb(24_24_27_/_0.95)]"
-                                          )
-                                        : ""
-                                )}
-                                style={
-                                    isExpanded
-                                        ? {
-                                              left: annotation.x,
-                                              top: annotation.y,
-                                              width: annotation.width,
-                                              height: annotation.height,
-                                          }
-                                        : { left: annotation.x, top: annotation.y }
-                                }
-                            >
-                                {isExpanded ? (
-                                    <div className="relative flex h-full w-full flex-col">
-                                        <div
-                                            className={cn(
-                                                "flex cursor-grab items-center justify-between border-b px-3 py-2 active:cursor-grabbing",
+                            const isComment = annotation.kind === "comment";
+                            const annotationItemKey = buildCanvasItemKey("annotation", annotation.id);
+                            const isExpanded = activeAnnotationId === annotation.id;
+                            const isSelected = selectedCanvasItemKeySet.has(annotationItemKey);
+                            return (
+                                <div
+                                    key={annotation.id}
+                                    data-workspace-annotation="true"
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    onContextMenu={(event) => openAnnotationItemMenu(event, annotation.id)}
+                                    className={cn(
+                                        "absolute z-10",
+                                        isSelected && "ring-2 ring-[var(--primary)]/70 rounded-xl",
+                                        isExpanded
+                                            ? cn(
+                                                "w-[340px] max-w-[68vw] rounded-xl border shadow-md",
                                                 isComment
-                                                    ? "border-sky-500/35 bg-sky-500/10"
-                                                    : "border-amber-500/35 bg-amber-500/10"
-                                            )}
-                                            onPointerDown={(event) =>
-                                                handlePlacedAnnotationPointerDown(event, annotation.id, {
-                                                    x: annotation.x,
-                                                    y: annotation.y,
-                                                })
+                                                    ? "border-sky-500/45 bg-[color:rgb(15_23_42_/_0.95)]"
+                                                    : "border-amber-500/45 bg-[color:rgb(24_24_27_/_0.95)]"
+                                            )
+                                            : ""
+                                    )}
+                                    style={
+                                        isExpanded
+                                            ? {
+                                                left: annotation.x,
+                                                top: annotation.y,
+                                                width: annotation.width,
+                                                height: annotation.height,
                                             }
-                                        >
-                                            <div className="inline-flex items-center gap-2 text-sm font-medium text-[var(--fg)]">
-                                                <button
-                                                    type="button"
-                                                    onPointerDown={(event) => event.stopPropagation()}
-                                                    onClick={(event) => {
-                                                        event.stopPropagation();
-                                                        closeAnnotationEditor();
-                                                    }}
-                                                    className="inline-flex h-6 w-6 items-center justify-center rounded-sm border border-transparent text-[var(--muted)] hover:border-[var(--border)] hover:text-[var(--fg)]"
-                                                    aria-label={isComment ? "Close comment" : "Close memo"}
-                                                >
-                                                    {isComment ? (
-                                                        <MessageCircle className="h-4 w-4 text-sky-300" />
-                                                    ) : (
-                                                        <NotebookPen className="h-4 w-4 text-amber-300" />
-                                                    )}
-                                                </button>
-                                                {editingAnnotationTitleId === annotation.id ? (
-                                                    <input
-                                                        ref={annotationTitleInputRef}
-                                                        type="text"
-                                                        value={annotation.title}
-                                                        onPointerDown={(event) => event.stopPropagation()}
-                                                        onClick={(event) => event.stopPropagation()}
-                                                        onChange={(event) =>
-                                                            updateAnnotationTitle(annotation.id, event.target.value)
-                                                        }
-                                                        onBlur={() => {
-                                                            updateAnnotationTitle(annotation.id, annotation.title, {
-                                                                finalize: true,
-                                                            });
-                                                            setEditingAnnotationTitleId(null);
-                                                        }}
-                                                        onKeyDown={(event) => {
-                                                            if (event.key === "Enter") {
-                                                                event.preventDefault();
+                                            : { left: annotation.x, top: annotation.y }
+                                    }
+                                >
+                                    {isExpanded ? (
+                                        <div className="relative flex h-full w-full flex-col">
+                                            <div
+                                                className={cn(
+                                                    "flex cursor-grab items-center justify-between border-b px-3 py-2 active:cursor-grabbing",
+                                                    isComment
+                                                        ? "border-sky-500/35 bg-sky-500/10"
+                                                        : "border-amber-500/35 bg-amber-500/10"
+                                                )}
+                                                onPointerDown={(event) =>
+                                                    handlePlacedAnnotationPointerDown(event, annotation.id, {
+                                                        x: annotation.x,
+                                                        y: annotation.y,
+                                                    })
+                                                }
+                                            >
+                                                <div className="inline-flex items-center gap-2 text-sm font-medium text-[var(--fg)]">
+                                                    <span className="inline-flex h-6 w-6 cursor-grab items-center justify-center rounded-sm border border-transparent text-[var(--muted)] active:cursor-grabbing">
+                                                        {isComment ? (
+                                                            <MessageCircle className="h-4 w-4 text-sky-300" />
+                                                        ) : (
+                                                            <NotebookPen className="h-4 w-4 text-amber-300" />
+                                                        )}
+                                                    </span>
+                                                    {editingAnnotationTitleId === annotation.id ? (
+                                                        <input
+                                                            ref={annotationTitleInputRef}
+                                                            type="text"
+                                                            value={annotation.title}
+                                                            onPointerDown={(event) => event.stopPropagation()}
+                                                            onClick={(event) => event.stopPropagation()}
+                                                            onChange={(event) =>
+                                                                updateAnnotationTitle(annotation.id, event.target.value)
+                                                            }
+                                                            onBlur={() => {
                                                                 updateAnnotationTitle(annotation.id, annotation.title, {
                                                                     finalize: true,
                                                                 });
                                                                 setEditingAnnotationTitleId(null);
-                                                                return;
-                                                            }
-                                                            if (event.key === "Escape") {
-                                                                event.preventDefault();
-                                                                updateAnnotationTitle(
-                                                                    annotation.id,
-                                                                    getDefaultAnnotationTitle(annotation.kind),
-                                                                    { finalize: true }
-                                                                );
-                                                                setEditingAnnotationTitleId(null);
-                                                            }
-                                                        }}
-                                                        className="h-7 w-40 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--border)]"
-                                                        placeholder={getDefaultAnnotationTitle(annotation.kind)}
-                                                    />
-                                                ) : (
+                                                            }}
+                                                            onKeyDown={(event) => {
+                                                                if (event.key === "Enter") {
+                                                                    event.preventDefault();
+                                                                    updateAnnotationTitle(annotation.id, annotation.title, {
+                                                                        finalize: true,
+                                                                    });
+                                                                    setEditingAnnotationTitleId(null);
+                                                                    return;
+                                                                }
+                                                                if (event.key === "Escape") {
+                                                                    event.preventDefault();
+                                                                    updateAnnotationTitle(
+                                                                        annotation.id,
+                                                                        getDefaultAnnotationTitle(annotation.kind, t),
+                                                                        { finalize: true }
+                                                                    );
+                                                                    setEditingAnnotationTitleId(null);
+                                                                }
+                                                            }}
+                                                            className="h-7 w-40 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--border)]"
+                                                            placeholder={getDefaultAnnotationTitle(annotation.kind, t)}
+                                                        />
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            onPointerDown={(event) => event.stopPropagation()}
+                                                            onClick={(event) => {
+                                                                event.stopPropagation();
+                                                                setEditingAnnotationTitleId(annotation.id);
+                                                            }}
+                                                            className="truncate rounded-sm px-1 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                                            title={t("workspace.rename")}
+                                                        >
+                                                            {annotation.title || getDefaultAnnotationTitle(annotation.kind, t)}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <div className="inline-flex items-center gap-1">
                                                     <button
                                                         type="button"
                                                         onPointerDown={(event) => event.stopPropagation()}
                                                         onClick={(event) => {
                                                             event.stopPropagation();
-                                                            setEditingAnnotationTitleId(annotation.id);
+                                                            closeAnnotationEditor();
                                                         }}
-                                                        className="truncate rounded-sm px-1 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                                                        title="Rename"
+                                                        className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-[var(--muted)] hover:text-[var(--fg)]"
+                                                        aria-label={isComment ? t("workspace.minimizeComment") : t("workspace.minimizeMemo")}
+                                                        title={t("workspace.minimize")}
                                                     >
-                                                        {annotation.title || getDefaultAnnotationTitle(annotation.kind)}
+                                                        <span className="block h-[2px] w-4 rounded-full bg-current" />
                                                     </button>
-                                                )}
+                                                    <button
+                                                        type="button"
+                                                        onPointerDown={(event) => {
+                                                            event.preventDefault();
+                                                            event.stopPropagation();
+                                                        }}
+                                                        onClick={(event) => {
+                                                            event.stopPropagation();
+                                                            removeAnnotationFromWorkspace(annotation.id);
+                                                        }}
+                                                        className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-[var(--muted)] hover:text-rose-400"
+                                                        aria-label={t("workspace.removeItem", {
+                                                            title: annotation.title || getDefaultAnnotationTitle(annotation.kind, t),
+                                                        })}
+                                                        title={t("workspace.removeFromWorkspace")}
+                                                    >
+                                                        <X className="h-3.5 w-3.5" />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="flex-1 p-3">
+                                                <textarea
+                                                    ref={isExpanded ? annotationEditorRef : undefined}
+                                                    value={annotation.text}
+                                                    onClick={(event) => event.stopPropagation()}
+                                                    onChange={(event) =>
+                                                        updateAnnotationText(annotation.id, event.target.value)
+                                                    }
+                                                    className="h-full w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--border)]"
+                                                    placeholder={
+                                                        isComment
+                                                            ? t("workspace.annotation.commentPlaceholder")
+                                                            : t("workspace.annotation.memoPlaceholder")
+                                                    }
+                                                />
                                             </div>
                                             <button
                                                 type="button"
-                                                onPointerDown={(event) => event.stopPropagation()}
-                                                onClick={(event) => {
-                                                    event.stopPropagation();
-                                                    closeAnnotationEditor();
-                                                }}
-                                                className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-[var(--muted)] hover:text-[var(--fg)]"
-                                                aria-label={isComment ? "Minimize comment" : "Minimize memo"}
-                                                title="Minimize"
+                                                aria-label={t("workspace.resizeAnnotation")}
+                                                onPointerDown={(event) =>
+                                                    handlePlacedAnnotationResizePointerDown(event, annotation)
+                                                }
+                                                className="absolute bottom-1 right-1 inline-flex h-5 w-5 cursor-se-resize items-center justify-center rounded-sm border border-[var(--border)] bg-[var(--card-bg-hover)] text-[var(--muted)] hover:text-[var(--fg)]"
                                             >
-                                                <span className="block h-[2px] w-4 rounded-full bg-current" />
+                                                <span className="text-[11px] leading-none">+</span>
                                             </button>
                                         </div>
-                                        <div className="flex-1 p-3">
-                                            <textarea
-                                                ref={isExpanded ? annotationEditorRef : undefined}
-                                                value={annotation.text}
-                                                onClick={(event) => event.stopPropagation()}
-                                                onChange={(event) =>
-                                                    updateAnnotationText(annotation.id, event.target.value)
-                                                }
-                                                className="h-full w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--border)]"
-                                                placeholder={isComment ? "Enter a comment." : "Enter a memo."}
-                                            />
-                                        </div>
-                                        <button
-                                            type="button"
-                                            aria-label="Resize annotation"
-                                            onPointerDown={(event) =>
-                                                handlePlacedAnnotationResizePointerDown(event, annotation)
-                                            }
-                                            className="absolute bottom-1 right-1 inline-flex h-5 w-5 cursor-se-resize items-center justify-center rounded-sm border border-[var(--border)] bg-[var(--card-bg-hover)] text-[var(--muted)] hover:text-[var(--fg)]"
-                                        >
-                                            <span className="text-[11px] leading-none">+</span>
-                                        </button>
-                                    </div>
-                                ) : (
-                                    isComment ? (
-                                        <button
-                                            type="button"
-                                            onPointerDown={(event) =>
-                                                handlePlacedAnnotationPointerDown(event, annotation.id, {
-                                                    x: annotation.x,
-                                                    y: annotation.y,
-                                                })
-                                            }
-                                            onClick={(event) => {
-                                                event.stopPropagation();
-                                                if (suppressAnnotationClickIdRef.current === annotation.id) {
-                                                    suppressAnnotationClickIdRef.current = null;
-                                                    return;
-                                                }
-                                                openAnnotationEditor(annotation.id);
-                                            }}
-                                            className="flex w-56 cursor-grab items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/15 px-2 py-1.5 text-left shadow-sm transition-colors hover:bg-sky-500/20 active:cursor-grabbing"
-                                            title={annotation.text || "No content"}
-                                        >
-                                            <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-sky-500/35 bg-sky-500/20 text-sky-300">
-                                                <MessageCircle className="h-4 w-4" />
-                                            </div>
-                                            <div className="min-w-0 flex-1">
-                                                <p className="truncate text-[10px] font-medium text-sky-200">
-                                                    {annotation.authorName ||
-                                                        (viewerMember?.username || data.viewerUserId || "Unknown")}
-                                                </p>
-                                                <p className="truncate text-[11px] text-sky-100/90">
-                                                    {String(annotation.text || "").trim() || "No content"}
-                                                </p>
-                                            </div>
-                                        </button>
                                     ) : (
-                                        <button
-                                            type="button"
-                                            onPointerDown={(event) =>
-                                                handlePlacedAnnotationPointerDown(event, annotation.id, {
-                                                    x: annotation.x,
-                                                    y: annotation.y,
-                                                })
-                                            }
-                                            onClick={(event) => {
-                                                event.stopPropagation();
-                                                if (suppressAnnotationClickIdRef.current === annotation.id) {
-                                                    suppressAnnotationClickIdRef.current = null;
-                                                    return;
+                                        isComment ? (
+                                            <button
+                                                type="button"
+                                                onPointerDown={(event) =>
+                                                    handlePlacedAnnotationPointerDown(event, annotation.id, {
+                                                        x: annotation.x,
+                                                        y: annotation.y,
+                                                    })
                                                 }
-                                                openAnnotationEditor(annotation.id);
-                                            }}
-                                            className="inline-flex h-11 w-11 cursor-grab items-center justify-center rounded-lg border border-amber-500/45 bg-amber-500/16 text-amber-300 shadow-sm transition-colors hover:bg-amber-500/22 active:cursor-grabbing"
-                                            title={`Memo: ${annotation.text || "empty"}`}
-                                        >
-                                            <NotebookPen className="h-5 w-5" />
-                                        </button>
-                                    )
-                                )}
-                            </div>
-                        );
-                    })}
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    if (suppressAnnotationClickIdRef.current === annotation.id) {
+                                                        suppressAnnotationClickIdRef.current = null;
+                                                        return;
+                                                    }
+                                                    openAnnotationEditor(annotation.id);
+                                                }}
+                                                className="flex w-56 cursor-grab items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/15 px-2 py-1.5 text-left shadow-sm transition-colors hover:bg-sky-500/20 active:cursor-grabbing"
+                                                title={annotation.text || t("workspace.noContent")}
+                                            >
+                                                <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-sky-500/35 bg-sky-500/20 text-sky-300">
+                                                    <MessageCircle className="h-4 w-4" />
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="truncate text-[10px] font-medium text-sky-200">
+                                                        {annotation.authorName ||
+                                                            (viewerMember?.username || data.viewerUserId || t("workspace.unknown"))}
+                                                    </p>
+                                                    <p className="truncate text-[11px] text-sky-100/90">
+                                                        {String(annotation.text || "").trim() || t("workspace.noContent")}
+                                                    </p>
+                                                </div>
+                                            </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onPointerDown={(event) =>
+                                                    handlePlacedAnnotationPointerDown(event, annotation.id, {
+                                                        x: annotation.x,
+                                                        y: annotation.y,
+                                                    })
+                                                }
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    if (suppressAnnotationClickIdRef.current === annotation.id) {
+                                                        suppressAnnotationClickIdRef.current = null;
+                                                        return;
+                                                    }
+                                                    openAnnotationEditor(annotation.id);
+                                                }}
+                                                className="inline-flex h-11 w-11 cursor-grab items-center justify-center rounded-lg border border-amber-500/45 bg-amber-500/16 text-amber-300 shadow-sm transition-colors hover:bg-amber-500/22 active:cursor-grabbing"
+                                                title={t("workspace.annotation.memoPreview", { text: annotation.text || t("workspace.empty") })}
+                                            >
+                                                <NotebookPen className="h-5 w-5" />
+                                            </button>
+                                        )
+                                    )}
+                                    {!isComment &&
+                                        renderItemCommentWidget(annotationItemKey, {
+                                            rootClassName: "left-0.5 bottom-0.5",
+                                            buttonClassName: "h-5 w-5",
+                                            panelClassName: "z-30",
+                                        })}
+                                </div>
+                            );
+                        })}
                 </div>
+                {isWorkspaceActionPending && (
+                    <div className="absolute inset-0 z-[96] flex items-center justify-center bg-[var(--bg)]/38 backdrop-blur-[1px]">
+                        <div className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--card-bg)]/95 px-3 py-2 text-xs font-medium text-[var(--fg)] shadow-sm">
+                            <Loader2 className="h-4 w-4 animate-spin text-[var(--primary)]" />
+                            <span>{t("common.loading")}</span>
+                        </div>
+                    </div>
+                )}
             </section>
 
             {fileShareDrag && (
@@ -6533,8 +7739,8 @@ export default function WorkspacePage() {
                         style={{ left: fileShareDrag.currentX, top: fileShareDrag.currentY + 18 }}
                     >
                         {fileShareDrag.hoverUserId
-                            ? `Send to ${fileShareDrag.hoverUsername}`
-                            : "Drop on a member card"}
+                            ? t("workspace.sendTo", { username: fileShareDrag.hoverUsername })
+                            : t("workspace.dropOnMemberCard")}
                     </div>
                 </div>
             )}
@@ -6609,14 +7815,14 @@ export default function WorkspacePage() {
                         className="w-full text-left px-3 py-1.5 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                         onClick={viewProfileFromMenu}
                     >
-                        Profile
+                        {t("workspace.profile")}
                     </button>
                     {canMoveProfileMenuItem && (
                         <>
                             <div className="my-1 border-t border-[var(--border)]" />
                             <div className="group/move relative">
                                 <div className="flex w-full items-center justify-between px-3 py-1.5 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                                    <span>Move to Group</span>
+                                    <span>{t("workspace.moveToGroup")}</span>
                                     <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                                 </div>
                                 <div
@@ -6626,7 +7832,7 @@ export default function WorkspacePage() {
                                     )}
                                 >
                                     {workspaceGroups.length === 0 ? (
-                                        <p className="px-3 py-2 text-xs text-[var(--muted)]">No groups available.</p>
+                                        <p className="px-3 py-2 text-xs text-[var(--muted)]">{t("workspace.noGroupsAvailable")}</p>
                                     ) : (
                                         <div className="max-h-60 overflow-auto">
                                             {workspaceGroups.map((group) => (
@@ -6652,7 +7858,16 @@ export default function WorkspacePage() {
                                     className="w-full px-3 py-1.5 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                     onClick={removeProfileItemFromGroupsFromMenu}
                                 >
-                                    Remove from Group
+                                    {t("workspace.removeFromGroup")}
+                                </button>
+                            )}
+                            {canLeaveCommentProfileMenuItem && (
+                                <button
+                                    type="button"
+                                    className="w-full px-3 py-1.5 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                    onClick={openProfileItemCommentFromMenu}
+                                >
+                                    {t("workspace.annotation.createComment")}
                                 </button>
                             )}
                             {canRemoveProfileMenuItem && (
@@ -6661,7 +7876,7 @@ export default function WorkspacePage() {
                                     className="w-full px-3 py-1.5 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                                     onClick={removeProfileItemFromWorkspaceFromMenu}
                                 >
-                                    Remove from Workspace
+                                    {t("workspace.removeFromWorkspace")}
                                 </button>
                             )}
                         </>
@@ -6671,7 +7886,7 @@ export default function WorkspacePage() {
                             <div className="my-1 border-t border-[var(--border)]" />
                             <div className="group/role relative">
                                 <div className="flex w-full items-center justify-between px-3 py-1.5 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                                    <span>Role</span>
+                                    <span>{t("workspace.role")}</span>
                                     <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                                 </div>
                                 <div
@@ -6686,7 +7901,7 @@ export default function WorkspacePage() {
                                         onClick={() => openRoleChangeConfirmFromMenu("Admin")}
                                         disabled={profileMenuTargetMember?.role === "Admin"}
                                     >
-                                        Set as Admin
+                                        {t("workspace.setAsAdmin")}
                                     </button>
                                     <button
                                         type="button"
@@ -6694,7 +7909,7 @@ export default function WorkspacePage() {
                                         onClick={() => openRoleChangeConfirmFromMenu("Member")}
                                         disabled={profileMenuTargetMember?.role === "Member"}
                                     >
-                                        Set as Member
+                                        {t("workspace.setAsMember")}
                                     </button>
                                 </div>
                             </div>
@@ -6706,30 +7921,30 @@ export default function WorkspacePage() {
             {canvasMenu && (
                 <div
                     data-workspace-canvas-menu="true"
-                    className="fixed z-[72] min-w-[176px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
+                    className="fixed z-[72] inline-flex w-fit min-w-0 flex-col overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md"
                     style={{ left: `${canvasMenu.x}px`, top: `${canvasMenu.y}px` }}
                     onMouseDown={(event) => event.stopPropagation()}
                 >
                     <button
                         type="button"
-                        className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                        className="whitespace-nowrap px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                         onClick={openCreateEntry}
                     >
-                        Create Folder
+                        {t("workspace.createFolder")}
                     </button>
                     <button
                         type="button"
-                        className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                        onClick={triggerImportFiles}
-                    >
-                        Import Files
-                    </button>
-                    <button
-                        type="button"
-                        className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                        className="whitespace-nowrap px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                         onClick={triggerImportFolders}
                     >
-                        Import Folder
+                        {t("workspace.importFolder")}
+                    </button>
+                    <button
+                        type="button"
+                        className="whitespace-nowrap px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                        onClick={triggerImportFiles}
+                    >
+                        {t("workspace.importFiles")}
                     </button>
                 </div>
             )}
@@ -6742,18 +7957,9 @@ export default function WorkspacePage() {
                     onMouseDown={(event) => event.stopPropagation()}
                 >
                     {selectedCanvasItemKeys.length > 0 && (
-                        <button
-                            type="button"
-                            className="whitespace-nowrap px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                            onClick={createWorkspaceGroupFromSelection}
-                        >
-                            Create Group ({selectedCanvasItemKeys.length})
-                        </button>
-                    )}
-                    {selectedCanvasItemKeys.length > 0 && (
                         <div className="group/move relative">
                             <div className="flex w-full items-center justify-between whitespace-nowrap px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                                <span>Move to Group</span>
+                                <span>{t("workspace.moveToGroup")}</span>
                                 <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                             </div>
                             <div
@@ -6763,7 +7969,7 @@ export default function WorkspacePage() {
                                 )}
                             >
                                 {workspaceGroups.length === 0 ? (
-                                    <p className="px-3 py-2 text-xs text-[var(--muted)]">No groups available.</p>
+                                    <p className="px-3 py-2 text-xs text-[var(--muted)]">{t("workspace.noGroupsAvailable")}</p>
                                 ) : (
                                     <div className="max-h-60 overflow-auto">
                                         {workspaceGroups.map((group) => (
@@ -6784,13 +7990,22 @@ export default function WorkspacePage() {
                             </div>
                         </div>
                     )}
-                    {selectedCanvasItemKeys.length > 0 && (
+                    {workspaceMode === "my" && selectedCanvasItemKeys.length > 0 && (
+                        <button
+                            type="button"
+                            className="whitespace-nowrap px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                            onClick={createGroupFromSelectedCanvasItems}
+                        >
+                            {t("workspace.createGroup")}
+                        </button>
+                    )}
+                    {removableSelectedCanvasItems.length > 0 && (
                         <button
                             type="button"
                             className="whitespace-nowrap px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                             onClick={removeSelectedCanvasItemsFromWorkspace}
                         >
-                            Remove from Workspace ({selectedCanvasItemKeys.length})
+                            {t("workspace.removeFromWorkspace")} ({removableSelectedCanvasItems.length})
                         </button>
                     )}
                     {workspaceCanvasMenu.mode !== "groupOnly" && (
@@ -6814,12 +8029,12 @@ export default function WorkspacePage() {
                 >
                     <div className="group/move relative">
                         <div className="flex w-full items-center justify-between px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                            <span>Move to Group</span>
+                            <span>{t("workspace.moveToGroup")}</span>
                             <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                         </div>
                         <div className="absolute left-full top-0 z-10 ml-1 hidden min-w-[188px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md group-hover/move:block group-focus-within/move:block">
                             {workspaceGroups.length === 0 ? (
-                                <p className="px-3 py-2 text-xs text-[var(--muted)]">No groups available.</p>
+                                <p className="px-3 py-2 text-xs text-[var(--muted)]">{t("workspace.noGroupsAvailable")}</p>
                             ) : (
                                 <div className="max-h-60 overflow-auto">
                                     {workspaceGroups.map((group) => (
@@ -6847,19 +8062,33 @@ export default function WorkspacePage() {
                                 className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                 onClick={removeAnnotationItemFromGroupsFromMenu}
                             >
-                                Remove from Group
+                                {t("workspace.removeFromGroup")}
                             </button>
                             <div className="my-1 border-t border-[var(--border)]" />
                         </>
                     )}
+                    {canLeaveCommentAnnotationItem && (
+                        <>
+                            <button
+                                type="button"
+                                className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                onClick={openAnnotationItemCommentFromMenu}
+                            >
+                                {t("workspace.annotation.createComment")}
+                            </button>
+                        </>
+                    )}
                     {!canUngroupAnnotationItem && (
-                        <button
-                            type="button"
-                            className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
-                            onClick={handleDeleteAnnotationFromMenu}
-                        >
-                            Remove from Workspace
-                        </button>
+                        <>
+                            {canLeaveCommentAnnotationItem && <div className="my-1 border-t border-[var(--border)]" />}
+                            <button
+                                type="button"
+                                className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
+                                onClick={handleDeleteAnnotationFromMenu}
+                            >
+                                {t("workspace.removeFromWorkspace")}
+                            </button>
+                        </>
                     )}
                 </div>
             )}
@@ -6873,12 +8102,12 @@ export default function WorkspacePage() {
                 >
                     <div className="group/move relative">
                         <div className="flex w-full items-center justify-between px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                            <span>Move to Group</span>
+                            <span>{t("workspace.moveToGroup")}</span>
                             <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                         </div>
                         <div className="absolute left-full top-0 z-10 ml-1 hidden min-w-[188px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md group-hover/move:block group-focus-within/move:block">
                             {workspaceGroups.length === 0 ? (
-                                <p className="px-3 py-2 text-xs text-[var(--muted)]">No groups available.</p>
+                                <p className="px-3 py-2 text-xs text-[var(--muted)]">{t("workspace.noGroupsAvailable")}</p>
                             ) : (
                                 <div className="max-h-60 overflow-auto">
                                     {workspaceGroups.map((group) => (
@@ -6903,7 +8132,7 @@ export default function WorkspacePage() {
                             <div className="my-1 border-t border-[var(--border)]" />
                             <div className="group/share relative">
                                 <div className="flex w-full items-center justify-between px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                                    <span>Send File</span>
+                                    <span>{t("workspace.sendFile")}</span>
                                     <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                                 </div>
                                 <div
@@ -6936,11 +8165,19 @@ export default function WorkspacePage() {
                                 className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                 onClick={removeCanvasFileItemFromGroupsFromMenu}
                             >
-                                Remove from Group
+                                {t("workspace.removeFromGroup")}
                             </button>
                         </>
                     )}
-                    {!canUngroupCanvasFileItem && (
+                    <div className="my-1 border-t border-[var(--border)]" />
+                    <button
+                        type="button"
+                        className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                        onClick={openCanvasFileItemCommentFromMenu}
+                    >
+                        {t("workspace.annotation.createComment")}
+                    </button>
+                    {canRemoveCanvasFileItemFromWorkspace && (
                         <>
                             <div className="my-1 border-t border-[var(--border)]" />
                             <button
@@ -6948,7 +8185,7 @@ export default function WorkspacePage() {
                                 className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                                 onClick={removeCanvasFileItemFromWorkspaceFromMenu}
                             >
-                                Remove from Workspace
+                                {t("workspace.removeFromWorkspace")}
                             </button>
                         </>
                     )}
@@ -6967,16 +8204,56 @@ export default function WorkspacePage() {
                         className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                         onClick={startInlineRenameFromMenu}
                     >
-                        Rename
+                        {t("workspace.rename")}
                     </button>
                     {!fileMenuTargetIsFolder && (
-                        <button
-                            type="button"
-                            className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
-                            onClick={openMoveFileFromMenu}
-                        >
-                            Move to Folder
-                        </button>
+                        <div className="group/move relative">
+                            <button
+                                type="button"
+                                className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                                onClick={openMoveFileFromMenu}
+                            >
+                                <span>{t("workspace.moveToFolder")}</span>
+                                <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
+                            </button>
+                            <div
+                                className={cn(
+                                    "absolute top-0 z-10 hidden min-w-[188px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] py-1 shadow-md group-hover/move:block group-focus-within/move:block",
+                                    fileItemMenu?.moveSubmenuLeft ? "right-full mr-1" : "left-full ml-1"
+                                )}
+                            >
+                                <div className="max-h-60 overflow-auto">
+                                    <button
+                                        type="button"
+                                        className={cn(
+                                            "w-full px-3 py-1.5 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]",
+                                            !fileMenuCurrentFolderId && "cursor-default text-[var(--muted)] hover:bg-transparent"
+                                        )}
+                                        onClick={() => void moveFileToFolderFromMenu(null)}
+                                        disabled={!fileMenuCurrentFolderId}
+                                    >
+                                        {t("workspace.root")}
+                                    </button>
+                                    {fileMenuMoveFolderOptions.map((folder) => {
+                                        const isCurrent = folder.id === fileMenuCurrentFolderId;
+                                        return (
+                                            <button
+                                                key={folder.id}
+                                                type="button"
+                                                className={cn(
+                                                    "w-full px-3 py-1.5 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]",
+                                                    isCurrent && "cursor-default text-[var(--muted)] hover:bg-transparent"
+                                                )}
+                                                onClick={() => void moveFileToFolderFromMenu(folder.id)}
+                                                disabled={isCurrent}
+                                            >
+                                                <span className="block truncate">{getFolderLabel(folder.title)}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
                     )}
                     {!fileMenuTargetIsFolder && (
                         <button
@@ -6984,13 +8261,13 @@ export default function WorkspacePage() {
                             className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                             onClick={openCreateEntryForFileFromMenu}
                         >
-                            Create Folder
+                            {t("workspace.createFolder")}
                         </button>
                     )}
                     {canSendFileFromSidebarMenu && (
                         <div className="group/share relative">
                             <div className="flex w-full items-center justify-between px-3 py-2 text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]">
-                                <span>Send File</span>
+                                <span>{t("workspace.sendFile")}</span>
                                 <ChevronRight className="h-3.5 w-3.5 text-[var(--muted)]" />
                             </div>
                             <div
@@ -7019,7 +8296,7 @@ export default function WorkspacePage() {
                         className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                         onClick={() => void handleDeleteFileFromMenu()}
                     >
-                        Delete
+                        {t("workspace.delete")}
                     </button>
                 </div>
             )}
@@ -7037,7 +8314,7 @@ export default function WorkspacePage() {
                             className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                             onClick={createEmptyWorkspaceGroupFromSidebar}
                         >
-                            Create Group
+                            {t("workspace.createGroup")}
                         </button>
                     ) : groupMenu.source === "canvas" ? (
                         <button
@@ -7045,7 +8322,7 @@ export default function WorkspacePage() {
                             className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                             onClick={handleHideCanvasGroupFromMenu}
                         >
-                            Remove from Workspace
+                            {t("workspace.removeFromWorkspace")}
                         </button>
                     ) : (
                         <>
@@ -7054,14 +8331,14 @@ export default function WorkspacePage() {
                                 className="w-full px-3 py-2 text-left text-sm text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
                                 onClick={startGroupInlineRenameFromMenu}
                             >
-                                Rename
+                                {t("workspace.rename")}
                             </button>
                             <button
                                 type="button"
                                 className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                                 onClick={handleDeleteGroupFromMenu}
                             >
-                                Delete
+                                {t("workspace.delete")}
                             </button>
                         </>
                     )}
@@ -7080,7 +8357,7 @@ export default function WorkspacePage() {
                         className="w-full px-3 py-2 text-left text-sm text-rose-500 hover:bg-[var(--card-bg-hover)]"
                         onClick={handleRemoveGroupEntryFromMenu}
                     >
-                        Remove from Group
+                        {t("workspace.removeFromGroup")}
                     </button>
                 </div>
             )}
@@ -7089,7 +8366,7 @@ export default function WorkspacePage() {
                     className="pointer-events-none fixed z-[80] whitespace-nowrap rounded border border-[var(--border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] text-[var(--fg)] shadow-md"
                     style={{ left: groupHintTooltip.x, top: groupHintTooltip.y, transform: "translateY(-50%)" }}
                 >
-                    {GROUP_HINT_TOOLTIP_TEXT}
+                    {groupHintTooltipText}
                 </div>
             )}
 
@@ -7115,12 +8392,12 @@ export default function WorkspacePage() {
             <ModalShell open={createEntryModal.open} onClose={closeCreateEntry} labelledBy={createEntryDialogTitleId}>
                 <div className="border-b border-[var(--border)] px-5 py-4">
                     <h3 id={createEntryDialogTitleId} className="text-base font-semibold text-[var(--fg)]">
-                        Create Folder
+                        {t("workspace.createFolder")}
                     </h3>
                 </div>
                 <div className="space-y-2 px-5 py-4">
                     <label htmlFor={createEntryInputId} className="text-xs text-[var(--muted)]">
-                        Name
+                        {t("workspace.name")}
                     </label>
                     <input
                         id={createEntryInputId}
@@ -7132,7 +8409,7 @@ export default function WorkspacePage() {
                             }))
                         }
                         className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
-                        placeholder="Folder name"
+                        placeholder={t("workspace.folderName")}
                     />
                     {createEntryModal.error && <p className="text-xs text-rose-500">{createEntryModal.error}</p>}
                 </div>
@@ -7144,7 +8421,7 @@ export default function WorkspacePage() {
                         onClick={closeCreateEntry}
                         disabled={createEntryModal.isSubmitting}
                     >
-                        Cancel
+                        {t("common.cancel")}
                     </Button>
                     <Button
                         type="button"
@@ -7152,7 +8429,7 @@ export default function WorkspacePage() {
                         onClick={() => void submitCreateEntry()}
                         disabled={createEntryModal.isSubmitting}
                     >
-                        {createEntryModal.isSubmitting ? "Creating..." : "Create"}
+                        {createEntryModal.isSubmitting ? t("workspace.creating") : t("workspace.create")}
                     </Button>
                 </div>
             </ModalShell>
@@ -7160,12 +8437,12 @@ export default function WorkspacePage() {
             <ModalShell open={moveFileModal.open} onClose={closeMoveFile} labelledBy={moveFileDialogTitleId}>
                 <div className="border-b border-[var(--border)] px-5 py-4">
                     <h3 id={moveFileDialogTitleId} className="text-base font-semibold text-[var(--fg)]">
-                        Move to Folder
+                        {t("workspace.moveToFolder")}
                     </h3>
                 </div>
                 <div className="space-y-2 px-5 py-4">
                     <label htmlFor={moveFileSelectId} className="text-xs text-[var(--muted)]">
-                        Destination
+                        {t("workspace.destination")}
                     </label>
                     <select
                         id={moveFileSelectId}
@@ -7178,10 +8455,10 @@ export default function WorkspacePage() {
                         }
                         className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
                     >
-                        <option value="">(Root)</option>
+                        <option value="">{t("workspace.root")}</option>
                         {moveFolderOptions.map((folder) => (
                             <option key={folder.id} value={folder.id}>
-                                {getFolderDisplayName(folder.title)}
+                                {getFolderLabel(folder.title)}
                             </option>
                         ))}
                     </select>
@@ -7195,7 +8472,7 @@ export default function WorkspacePage() {
                         onClick={closeMoveFile}
                         disabled={moveFileModal.isSubmitting}
                     >
-                        Cancel
+                        {t("common.cancel")}
                     </Button>
                     <Button
                         type="button"
@@ -7203,21 +8480,24 @@ export default function WorkspacePage() {
                         onClick={() => void submitMoveFile()}
                         disabled={moveFileModal.isSubmitting}
                     >
-                        {moveFileModal.isSubmitting ? "Moving..." : "Move"}
+                        {moveFileModal.isSubmitting ? t("workspace.moving") : t("workspace.move")}
                     </Button>
                 </div>
             </ModalShell>
 
             <ConfirmModal
                 open={fileShareConfirm.open}
-                title={fileShareConfirm.isResend ? "Resend file request" : "Send file request"}
+                title={fileShareConfirm.isResend ? t("workspace.resendFileRequest") : t("workspace.sendFileRequest")}
                 message={
                     fileShareConfirm.isResend
-                        ? `This file request was already sent. Send it again to ${fileShareConfirm.toUsername}?`
-                        : `Send ${fileShareConfirm.fileName} to ${fileShareConfirm.toUsername}?`
+                        ? t("workspace.fileShareResendMessage", { username: fileShareConfirm.toUsername })
+                        : t("workspace.fileShareMessage", {
+                            fileName: fileShareConfirm.fileName,
+                            username: fileShareConfirm.toUsername,
+                        })
                 }
-                confirmLabel={fileShareConfirm.isResend ? "Send Again" : "Send"}
-                cancelLabel="Cancel"
+                confirmLabel={fileShareConfirm.isResend ? t("workspace.sendAgain") : t("workspace.send")}
+                cancelLabel={t("common.cancel")}
                 isProcessing={fileShareConfirm.isSubmitting}
                 onCancel={closeFileShareConfirm}
                 onConfirm={() => {
@@ -7227,10 +8507,13 @@ export default function WorkspacePage() {
 
             <ConfirmModal
                 open={roleChangeConfirm.open}
-                title="Change role"
-                message={`Change ${roleChangeConfirm.targetUsername} role to ${roleChangeConfirm.nextRole}?`}
-                confirmLabel="Change"
-                cancelLabel="Cancel"
+                title={t("workspace.changeRole")}
+                message={t("workspace.changeRoleMessage", {
+                    username: roleChangeConfirm.targetUsername,
+                    role: getRoleLabel(roleChangeConfirm.nextRole),
+                })}
+                confirmLabel={t("workspace.change")}
+                cancelLabel={t("common.cancel")}
                 isProcessing={roleChangeConfirm.isSubmitting}
                 onCancel={cancelRoleChangeConfirm}
                 onConfirm={() => {
@@ -7244,6 +8527,123 @@ export default function WorkspacePage() {
                 message={notice.message}
                 onClose={() => setNotice((prev) => ({ ...prev, open: false }))}
             />
+
+            {activeItemCommentKey && canAddCommentToItem(activeItemCommentKey) && (
+                <div
+                    className="fixed z-[90] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card-bg)] shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)]"
+                    style={{
+                        width: 280,
+                        left: commentWindowPosition ? commentWindowPosition.x : "50%",
+                        top: commentWindowPosition ? commentWindowPosition.y : "50%",
+                        transform: commentWindowPosition ? "none" : "translate(-50%, -50%)",
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                    onWheel={(e) => e.stopPropagation()}
+                >
+                    <div
+                        className="flex cursor-grab items-center justify-between border-b border-[var(--border)] bg-[var(--card-bg)] px-2.5 py-1.5 hover:bg-[var(--card-bg-hover)] active:cursor-grabbing"
+                        onPointerDown={(e) => {
+                            e.preventDefault();
+                            const startX = e.clientX;
+                            const startY = e.clientY;
+                            const currentTarget = e.currentTarget.parentElement;
+                            if (!currentTarget) return;
+                            const rect = currentTarget.getBoundingClientRect();
+                            const initialX = rect.left;
+                            const initialY = rect.top;
+
+                            const onMove = (moveEv: PointerEvent) => {
+                                setCommentWindowPosition({
+                                    x: initialX + (moveEv.clientX - startX),
+                                    y: initialY + (moveEv.clientY - startY),
+                                });
+                            };
+                            const onUp = () => {
+                                window.removeEventListener("pointermove", onMove);
+                                window.removeEventListener("pointerup", onUp);
+                            };
+                            window.addEventListener("pointermove", onMove);
+                            window.addEventListener("pointerup", onUp);
+                        }}
+                    >
+                        <p className="pointer-events-none text-xs font-semibold text-[var(--fg)]">
+                            {t("workspace.annotation.commentTitle")} ({(itemCommentsByKey.get(activeItemCommentKey) || []).length})
+                        </p>
+                        <button
+                            type="button"
+                            onPointerDown={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                            }}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                closeItemCommentComposer();
+                            }}
+                            className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-[var(--muted)] hover:text-[var(--fg)]"
+                            aria-label={t("workspace.closeComment")}
+                            title={t("workspace.closeComment")}
+                        >
+                            <X className="h-3.5 w-3.5" />
+                        </button>
+                    </div>
+                    <div className="max-h-44 space-y-1.5 overflow-auto p-2">
+                        {(itemCommentsByKey.get(activeItemCommentKey) || []).length === 0 ? (
+                            <p className="px-1 py-1 text-xs text-[var(--muted)]">{t("workspace.noContent")}</p>
+                        ) : (
+                            (itemCommentsByKey.get(activeItemCommentKey) || []).map((comment) => (
+                                <div
+                                    key={comment.id}
+                                    className="rounded-md border border-[var(--border)] bg-[var(--card-bg-hover)] px-2 py-1.5"
+                                >
+                                    <div className="mb-0.5 flex items-center justify-between gap-2">
+                                        <p className="truncate text-[10px] font-semibold text-[var(--fg)]">
+                                            {comment.authorName || comment.authorUserId || t("workspace.unknown")}
+                                        </p>
+                                        <p className="shrink-0 text-[9px] text-[var(--muted)]">
+                                            {new Date(comment.createdAt).toLocaleString()}
+                                        </p>
+                                    </div>
+                                    <p className="whitespace-pre-wrap break-words text-[11px] text-[var(--fg)]">
+                                        {comment.text}
+                                    </p>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                    <div className="border-t border-[var(--border)] p-2">
+                        <textarea
+                            value={itemCommentDraft}
+                            onChange={(event) => setItemCommentDraft(event.target.value.slice(0, 1000))}
+                            onKeyDown={(event) => {
+                                if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                                    event.preventDefault();
+                                    submitItemComment(activeItemCommentKey);
+                                }
+                            }}
+                            className="h-16 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
+                            placeholder={t("workspace.annotation.commentPlaceholder")}
+                        />
+                        <div className="mt-1.5 flex items-center justify-end gap-1.5">
+                            <button
+                                type="button"
+                                onClick={closeItemCommentComposer}
+                                className="rounded-sm border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--fg)] hover:bg-[var(--card-bg-hover)]"
+                            >
+                                {t("common.cancel")}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => submitItemComment(activeItemCommentKey)}
+                                disabled={!String(itemCommentDraft || "").trim()}
+                                className="rounded-sm border border-[var(--primary)] px-2 py-1 text-[11px] text-[var(--primary)] hover:bg-[var(--card-bg-hover)] disabled:cursor-not-allowed disabled:opacity-45"
+                            >
+                                {t("workspace.send")}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

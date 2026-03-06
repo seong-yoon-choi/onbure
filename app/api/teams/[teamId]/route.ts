@@ -5,6 +5,7 @@ import { deleteTeam, getTeamById, getTeamMembers, isActiveMemberStatus, updateTe
 import { syncAcceptedTeamMembershipsForUser } from "@/lib/db/requests";
 import { listUsers, verifyUserPassword } from "@/lib/db/users";
 import { appendAuditLog } from "@/lib/db/audit";
+import { translateTextsWithDeepL } from "@/lib/server/deepl";
 
 export const runtime = "nodejs";
 
@@ -77,15 +78,8 @@ export async function GET(
     { params }: { params: Promise<{ teamId: string }> }
 ) {
     const session = await getServerSession(authOptions);
-    if (!session) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { teamId } = await params;
-    const currentUserId = String((session.user as { id?: string } | undefined)?.id || "");
-    if (!currentUserId.trim()) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const currentUserId = String((session?.user as { id?: string } | undefined)?.id || "");
     const now = Date.now();
     const cacheKey = getTeamDetailCacheKey(currentUserId, teamId);
     const cached = teamDetailCache.get(cacheKey);
@@ -94,12 +88,14 @@ export async function GET(
     }
 
     try {
-        await syncTeamMembershipsWithThrottle(currentUserId, teamId).catch((error) => {
-            if (isNotionRateLimitedError(error)) {
-                return;
-            }
-            throw error;
-        });
+        if (currentUserId) {
+            await syncTeamMembershipsWithThrottle(currentUserId, teamId).catch((error) => {
+                if (isNotionRateLimitedError(error)) {
+                    return;
+                }
+                throw error;
+            });
+        }
 
         const team = await getTeamById(teamId);
         if (!team) {
@@ -124,9 +120,25 @@ export async function GET(
             ...member,
             username: usernameByUserId.get(member.userId) || member.userId,
         }));
+        const originalDescription = String(team.description || "").trim();
+        const viewerLanguage =
+            users.find((user) => String(user.userId || "").trim() === currentUserId)?.language || "";
+        const translatedDescriptionMap =
+            originalDescription && viewerLanguage
+                ? await translateTextsWithDeepL([originalDescription], viewerLanguage)
+                : new Map<string, string>();
+        const translatedDescription =
+            originalDescription && viewerLanguage
+                ? String(translatedDescriptionMap.get(originalDescription) || "").trim()
+                : "";
+        const descriptionTranslated =
+            translatedDescription && translatedDescription !== originalDescription
+                ? translatedDescription
+                : null;
 
         const payload = {
             ...withProfileDefaults(team, activeMembers.length),
+            descriptionTranslated,
             members: membersWithUsername,
             isMember,
             isOwner,
@@ -203,6 +215,22 @@ export async function PATCH(
         });
 
         const activeMemberCount = members.filter((member) => isActiveMemberStatus(member.status)).length;
+        const users = await listUsers();
+        const viewerLanguage =
+            users.find((user) => String(user.userId || "").trim() === currentUserId)?.language || "";
+        const originalDescription = String(updated.description || "").trim();
+        const translatedDescriptionMap =
+            originalDescription && viewerLanguage
+                ? await translateTextsWithDeepL([originalDescription], viewerLanguage)
+                : new Map<string, string>();
+        const translatedDescription =
+            originalDescription && viewerLanguage
+                ? String(translatedDescriptionMap.get(originalDescription) || "").trim()
+                : "";
+        const descriptionTranslated =
+            translatedDescription && translatedDescription !== originalDescription
+                ? translatedDescription
+                : null;
         invalidateTeamDetailCache(teamId);
         (globalThis as any).__onbureTeamsListCache?.delete?.(currentUserId);
         await appendAuditLog({
@@ -216,7 +244,13 @@ export async function PATCH(
                 stage: updated.stage,
             },
         });
-        return NextResponse.json({ success: true, team: withProfileDefaults(updated, activeMemberCount) });
+        return NextResponse.json({
+            success: true,
+            team: {
+                ...withProfileDefaults(updated, activeMemberCount),
+                descriptionTranslated,
+            },
+        });
     } catch (error) {
         if (isNotionRateLimitedError(error)) {
             return NextResponse.json(

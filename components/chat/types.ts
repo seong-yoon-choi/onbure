@@ -31,6 +31,8 @@ export interface MessageItem {
     senderId: string;
     senderUsername?: string;
     bodyOriginal: string;
+    bodyTranslated?: string;
+    translatedLang?: string;
     createdAt: string;
 }
 

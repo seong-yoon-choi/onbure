@@ -4,6 +4,15 @@ import GithubProvider from "next-auth/providers/github";
 import GoogleProvider from "next-auth/providers/google";
 import { getUserByEmail, verifyUserPassword } from "./db/users";
 
+export function isAdmin(email?: string | null): boolean {
+    if (!email) return false;
+    const adminEmails = process.env.ADMIN_EMAILS || "";
+    if (!adminEmails) return false;
+
+    const adminList = adminEmails.split(",").map((e) => e.trim().toLowerCase());
+    return adminList.includes(email.trim().toLowerCase());
+}
+
 export const authOptions: NextAuthOptions = {
     providers: [
         CredentialsProvider({
@@ -66,6 +75,7 @@ export const authOptions: NextAuthOptions = {
             if (session.user) {
                 (session.user as any).id = token.sub;
                 session.user.name = token.name; // Ensure token name (username) propagates
+                (session.user as any).isAdmin = isAdmin(session.user?.email);
             }
             return session;
         },

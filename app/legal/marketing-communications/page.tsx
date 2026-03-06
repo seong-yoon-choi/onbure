@@ -1,4 +1,16 @@
+import type { Metadata } from "next";
+import { buildPageMetadata } from "@/lib/seo";
+
 export const runtime = "nodejs";
+
+export const metadata: Metadata = buildPageMetadata({
+    title: "Marketing Communications",
+    description:
+        "Learn how Onbure handles optional marketing communications, consent preferences, delivery channels, and opt-out controls.",
+    pathname: "/legal/marketing-communications",
+    keywords: ["marketing communications", "consent", "email preferences"],
+    openGraphType: "article",
+});
 
 export default function MarketingCommunicationsPage() {
     return (

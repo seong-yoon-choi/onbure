@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { User as UserIcon, Save, Loader2, Pencil, X } from "lucide-react";
-import { useTheme } from "@/components/providers";
+import { useLanguage, useTheme } from "@/components/providers";
 import { AlertModal, ConfirmModal } from "@/components/ui/modal";
 import { trackUxClick } from "@/lib/ux/client";
 import { ALL_SIGNUP_COUNTRIES } from "@/lib/signup-consent";
+import { normalizeLanguage } from "@/lib/i18n";
+import { APP_LANGUAGES } from "@/lib/i18n/messages";
 
 interface UserProfile {
     username: string;
@@ -34,7 +36,6 @@ interface TeamMembershipSummary {
 
 const fieldClass =
     "w-full bg-[var(--input-bg)] border border-[var(--border)] rounded-md px-3 py-2 text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]";
-const LEAVE_CONFIRM_MESSAGE = "You have unsaved changes. Leave without saving?";
 
 function normalizeProfileForCompare(profile: UserProfile): UserProfile {
     return {
@@ -44,7 +45,7 @@ function normalizeProfileForCompare(profile: UserProfile): UserProfile {
         gender: profile.gender || "",
         age: String(profile.age || "").trim(),
         country: profile.country || "",
-        language: profile.language || "",
+        language: normalizeLanguage(profile.language || ""),
         skills: profile.skills.map((skill) => skill.trim()).filter(Boolean),
         availabilityHours: profile.availabilityHours || "",
         bio: profile.bio.trim(),
@@ -56,6 +57,7 @@ export default function ProfilePage() {
     const { status } = useSession();
     const router = useRouter();
     const { theme, setTheme } = useTheme();
+    const { setLanguage, t } = useLanguage();
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [isUsernameEditing, setIsUsernameEditing] = useState(false);
@@ -99,21 +101,12 @@ export default function ProfilePage() {
         });
     };
 
-    useEffect(() => {
-        if (status === "unauthenticated") {
-            router.push("/login");
-            return;
-        }
-        if (status === "authenticated") {
-            fetchProfile();
-        }
-    }, [status, router]);
-
-    const fetchProfile = async () => {
+    const fetchProfile = useCallback(async () => {
         try {
             const res = await fetch("/api/profile");
             if (res.ok) {
                 const data = await res.json();
+                const normalizedLanguage = normalizeLanguage(data.language || "ko");
                 const loadedProfile: UserProfile = {
                     username: data.username || data.name || "",
                     publicCode: data.publicCode || "",
@@ -124,7 +117,7 @@ export default function ProfilePage() {
                             : "",
                     age: Number.isFinite(data.age) ? String(data.age) : "",
                     country: data.country || "KR",
-                    language: data.language || "ko",
+                    language: normalizedLanguage,
                     skills: data.skills || [],
                     availabilityHours: data.availabilityHours || "40+",
                     bio: data.bio || "",
@@ -135,13 +128,24 @@ export default function ProfilePage() {
                 setUsernameDraft(loadedProfile.username);
                 setEmailDraft(loadedProfile.email);
                 setTeamMemberships(data.teamMemberships || []);
+                setLanguage(normalizedLanguage);
             }
         } catch (error) {
             console.error("Failed to load profile", error);
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [setLanguage]);
+
+    useEffect(() => {
+        if (status === "unauthenticated") {
+            router.push("/login");
+            return;
+        }
+        if (status === "authenticated") {
+            void fetchProfile();
+        }
+    }, [status, router, fetchProfile]);
 
     const isDirty = useMemo(() => {
         if (!initialProfile) return false;
@@ -207,14 +211,14 @@ export default function ProfilePage() {
             setInitialProfile(nextProfile);
             setNotice({
                 open: true,
-                title: "Profile updated",
-                message: "Profile saved successfully!",
+                title: t("profile.noticeUpdatedTitle"),
+                message: t("profile.noticeUpdatedMessage"),
             });
         } catch {
             setNotice({
                 open: true,
-                title: "Save failed",
-                message: "Failed to save profile.",
+                title: t("profile.noticeSaveFailedTitle"),
+                message: t("profile.noticeSaveFailedMessage"),
             });
         } finally {
             setIsSaving(false);
@@ -329,7 +333,7 @@ export default function ProfilePage() {
     const confirmDeleteAccount = async () => {
         if (isDeleting) return;
         if (!deletePassword) {
-            setDeleteError("Password is required.");
+            setDeleteError(t("profile.passwordRequired"));
             return;
         }
         trackProfileAction("profile.delete_account");
@@ -347,20 +351,24 @@ export default function ProfilePage() {
             });
             const payload = await res.json().catch(() => ({}));
             if (!res.ok) {
-                throw new Error(payload?.error || "Failed to delete account.");
+                const apiError = typeof payload?.error === "string" ? String(payload.error).trim() : "";
+                if (!apiError || apiError === "Failed to delete account." || apiError === "Unauthorized") {
+                    throw new Error(t("profile.deleteFailed"));
+                }
+                throw new Error(apiError);
             }
 
             setDeleteModalOpen(false);
             await signOut({ callbackUrl: "/register" });
         } catch (error: any) {
-            setDeleteError(error?.message || "Failed to delete account.");
+            setDeleteError(error?.message || t("profile.deleteFailed"));
         } finally {
             setIsDeleting(false);
         }
     };
 
     if (isLoading) {
-        return <div className="flex justify-center items-center h-full text-[var(--muted)]">Loading...</div>;
+        return <div className="flex justify-center items-center h-full text-[var(--muted)]">{t("common.loading")}</div>;
     }
 
     return (
@@ -392,13 +400,13 @@ export default function ProfilePage() {
                             />
                         ) : (
                             <div className="flex items-center gap-2">
-                                <h1 className="text-2xl font-bold text-[var(--fg)]">{profile.username || "Set username"}</h1>
+                                <h1 className="text-2xl font-bold text-[var(--fg)]">{profile.username || t("profile.setUsername")}</h1>
                                 <button
                                     type="button"
                                     onClick={startUsernameEdit}
                                     className="inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--card-bg-hover)] hover:text-[var(--fg)] transition-colors"
-                                    title="Edit username"
-                                    aria-label="Edit username"
+                                    title={t("profile.editUsername")}
+                                    aria-label={t("profile.editUsername")}
                                 >
                                     <Pencil className="h-3.5 w-3.5" />
                                 </button>
@@ -429,8 +437,8 @@ export default function ProfilePage() {
                                     type="button"
                                     onClick={startEmailEdit}
                                     className="inline-flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted)] hover:bg-[var(--card-bg-hover)] hover:text-[var(--fg)] transition-colors"
-                                    title="Edit email"
-                                    aria-label="Edit email"
+                                    title={t("profile.editEmail")}
+                                    aria-label={t("profile.editEmail")}
                                 >
                                     <Pencil className="h-3 w-3" />
                                 </button>
@@ -445,28 +453,28 @@ export default function ProfilePage() {
                     className="flex items-center gap-2 px-6 py-2 bg-[var(--primary)] hover:brightness-95 text-[var(--primary-foreground)] rounded-lg font-medium transition-colors disabled:opacity-50"
                 >
                     {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    Save Changes
+                    {t("common.saveChanges")}
                 </button>
             </header>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 <div className="space-y-6">
-                    <h3 className="text-lg font-semibold text-emerald-500 uppercase tracking-wider text-xs">Essential</h3>
+                    <h3 className="text-lg font-semibold text-emerald-500 uppercase tracking-wider text-xs">{t("profile.sectionEssential")}</h3>
 
                     <div className="space-y-2">
-                        <label className="text-sm text-[var(--muted)]">Theme</label>
+                        <label className="text-sm text-[var(--muted)]">{t("profile.theme")}</label>
                         <select
                             value={theme}
                             onChange={(e) => setTheme(e.target.value === "dark" ? "dark" : "light")}
                             className={fieldClass}
                         >
-                            <option value="light">Light</option>
-                            <option value="dark">Dark</option>
+                            <option value="light">{t("profile.themeLight")}</option>
+                            <option value="dark">{t("profile.themeDark")}</option>
                         </select>
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-sm text-[var(--muted)]">Gender</label>
+                        <label className="text-sm text-[var(--muted)]">{t("profile.gender")}</label>
                         <select
                             value={profile.gender}
                             onChange={(e) =>
@@ -477,15 +485,15 @@ export default function ProfilePage() {
                             }
                             className={fieldClass}
                         >
-                            <option value="">Select gender</option>
-                            <option value="male">Male</option>
-                            <option value="female">Female</option>
-                            <option value="other">Other</option>
+                            <option value="">{t("profile.genderSelect")}</option>
+                            <option value="male">{t("profile.genderMale")}</option>
+                            <option value="female">{t("profile.genderFemale")}</option>
+                            <option value="other">{t("profile.genderOther")}</option>
                         </select>
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-sm text-[var(--muted)]">Age</label>
+                        <label className="text-sm text-[var(--muted)]">{t("profile.age")}</label>
                         <input
                             type="text"
                             inputMode="numeric"
@@ -501,12 +509,12 @@ export default function ProfilePage() {
                                 });
                             }}
                             className={fieldClass}
-                            placeholder="Enter age"
+                            placeholder={t("profile.agePlaceholder")}
                         />
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-sm text-[var(--muted)]">Country *</label>
+                        <label className="text-sm text-[var(--muted)]">{t("profile.country")}</label>
                         <select
                             value={profile.country}
                             onChange={(e) => setProfile({ ...profile, country: e.target.value })}
@@ -521,20 +529,34 @@ export default function ProfilePage() {
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-sm text-[var(--muted)]">Language (Translation Target) *</label>
+                        <label className="text-sm text-[var(--muted)]">{t("profile.languageTarget")}</label>
                         <select
                             value={profile.language}
-                            onChange={(e) => setProfile({ ...profile, language: e.target.value })}
+                            onChange={(e) => {
+                                const nextLanguage = normalizeLanguage(e.target.value);
+                                setProfile({ ...profile, language: nextLanguage });
+                                setLanguage(nextLanguage);
+                            }}
                             className={fieldClass}
                         >
-                            <option value="ko">Korean</option>
-                            <option value="en">English</option>
-                            <option value="ja">Japanese</option>
+                            {APP_LANGUAGES.map((code) => (
+                                <option key={code} value={code}>
+                                    {code === "ko"
+                                        ? t("language.korean")
+                                        : code === "ja"
+                                            ? t("language.japanese")
+                                            : code === "fr"
+                                                ? t("language.french")
+                                                : code === "es"
+                                                    ? t("language.spanish")
+                                                    : t("language.english")}
+                                </option>
+                            ))}
                         </select>
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-sm text-[var(--muted)]">My Teams</label>
+                        <label className="text-sm text-[var(--muted)]">{t("profile.myTeams")}</label>
                         <div className="rounded-md border border-[var(--border)] bg-[var(--input-bg)] p-2 space-y-2 max-h-44 overflow-auto">
                             {teamMemberships.length > 0 ? (
                                 teamMemberships.map((membership) => (
@@ -545,26 +567,45 @@ export default function ProfilePage() {
                                         <div className="flex items-center justify-between gap-2">
                                             <p className="text-sm font-medium text-[var(--fg)] truncate">{membership.teamName}</p>
                                             <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)]">
-                                                {membership.role}
+                                                {membership.role === "Owner"
+                                                    ? t("team.role.owner")
+                                                    : membership.role === "Admin"
+                                                        ? t("team.role.admin")
+                                                        : membership.role === "Member"
+                                                            ? t("team.role.member")
+                                                            : membership.role}
                                             </span>
                                         </div>
                                         <p className="text-[10px] text-[var(--muted)] mt-1">
-                                            {membership.visibility} · {membership.status}
+                                            {t("profile.teamMembershipLine", {
+                                                visibility:
+                                                    membership.visibility === "Public"
+                                                        ? t("visibility.public")
+                                                        : membership.visibility === "Private"
+                                                            ? t("visibility.private")
+                                                            : membership.visibility,
+                                                status:
+                                                    membership.status === "Active"
+                                                        ? t("status.active")
+                                                        : membership.status === "Inactive"
+                                                            ? t("status.inactive")
+                                                            : membership.status,
+                                            })}
                                         </p>
                                     </div>
                                 ))
                             ) : (
-                                <p className="text-xs text-[var(--muted)]">No team memberships yet.</p>
+                                <p className="text-xs text-[var(--muted)]">{t("profile.noTeamMemberships")}</p>
                             )}
                         </div>
                     </div>
                 </div>
 
                 <div className="space-y-6">
-                    <h3 className="text-lg font-semibold text-violet-500 uppercase tracking-wider text-xs">Recommended</h3>
+                    <h3 className="text-lg font-semibold text-violet-500 uppercase tracking-wider text-xs">{t("profile.sectionRecommended")}</h3>
 
                     <div className="space-y-2">
-                        <label className="text-sm text-[var(--muted)]">Skills</label>
+                        <label className="text-sm text-[var(--muted)]">{t("profile.skills")}</label>
                         <div className="flex gap-2">
                             <input
                                 type="text"
@@ -576,15 +617,15 @@ export default function ProfilePage() {
                                         addSkill();
                                     }
                                 }}
-                                placeholder="Add one skill and press Enter"
+                                placeholder={t("profile.skillsPlaceholder")}
                                 className={fieldClass}
                             />
                             <button
                                 type="button"
                                 onClick={addSkill}
-                                className="px-3 rounded-md border border-[var(--border)] bg-[var(--card-bg-hover)] text-[var(--fg)] text-sm"
+                                className="shrink-0 whitespace-nowrap px-2.5 rounded-md border border-[var(--border)] bg-[var(--card-bg-hover)] text-[var(--fg)] text-xs leading-none"
                             >
-                                Add
+                                {t("common.add")}
                             </button>
                         </div>
                         <div className="rounded-md border border-[var(--border)] bg-[var(--input-bg)] p-2 min-h-12">
@@ -605,7 +646,7 @@ export default function ProfilePage() {
                                     ))}
                                 </div>
                             ) : (
-                                <p className="text-xs text-[var(--muted)]">No skills added yet.</p>
+                                <p className="text-xs text-[var(--muted)]">{t("profile.noSkills")}</p>
                             )}
                             {profile.skills.length > 4 && (
                                 <button
@@ -613,66 +654,68 @@ export default function ProfilePage() {
                                     onClick={() => setSkillsExpanded((prev) => !prev)}
                                     className="mt-2 text-xs text-[var(--primary)] hover:underline"
                                 >
-                                    {skillsExpanded ? "Collapse" : `Show all (${profile.skills.length})`}
+                                    {skillsExpanded
+                                        ? t("common.collapse")
+                                        : t("profile.showAll", { count: profile.skills.length })}
                                 </button>
                             )}
                         </div>
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-sm text-[var(--muted)]">Availability (Hrs/Week)</label>
+                        <label className="text-sm text-[var(--muted)]">{t("profile.availability")}</label>
                         <select
                             value={profile.availabilityHours}
                             onChange={(e) => setProfile({ ...profile, availabilityHours: e.target.value })}
                             className={fieldClass}
                         >
-                            <option value="1-5">1-5 hours</option>
-                            <option value="6-10">6-10 hours</option>
-                            <option value="11-20">11-20 hours</option>
-                            <option value="21-40">21-40 hours</option>
-                            <option value="40+">40+ hours</option>
+                            <option value="1-5">{t("profile.hours.1-5")}</option>
+                            <option value="6-10">{t("profile.hours.6-10")}</option>
+                            <option value="11-20">{t("profile.hours.11-20")}</option>
+                            <option value="21-40">{t("profile.hours.21-40")}</option>
+                            <option value="40+">{t("profile.hours.40+")}</option>
                         </select>
                     </div>
                 </div>
 
                 <div className="space-y-6">
-                    <h3 className="text-lg font-semibold text-[var(--muted)] uppercase tracking-wider text-xs">Optional</h3>
+                    <h3 className="text-lg font-semibold text-[var(--muted)] uppercase tracking-wider text-xs">{t("profile.sectionOptional")}</h3>
 
                     <div className="space-y-2">
-                        <label className="text-sm text-[var(--muted)]">Bio</label>
+                        <label className="text-sm text-[var(--muted)]">{t("profile.bio")}</label>
                         <textarea
                             value={profile.bio}
                             onChange={(e) => setProfile({ ...profile, bio: e.target.value })}
                             rows={4}
                             className={fieldClass}
-                            placeholder="Tell us about yourself..."
+                            placeholder={t("profile.bioPlaceholder")}
                         />
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-sm text-[var(--muted)]">Portfolio Links (One per line)</label>
+                        <label className="text-sm text-[var(--muted)]">{t("profile.portfolioLinks")}</label>
                         <textarea
                             value={profile.portfolioLinks.join("\n")}
                             onChange={(e) => setProfile({ ...profile, portfolioLinks: e.target.value.split("\n") })}
                             rows={4}
                             className={fieldClass}
-                            placeholder="https://github.com/..."
+                            placeholder={t("profile.portfolioPlaceholder")}
                         />
                     </div>
                 </div>
             </div>
 
             <section className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-5">
-                <h3 className="text-sm font-semibold text-rose-500 uppercase tracking-wide">Danger Zone</h3>
+                <h3 className="text-sm font-semibold text-rose-500 uppercase tracking-wide">{t("profile.dangerZone")}</h3>
                 <p className="mt-2 text-sm text-[var(--muted)]">
-                    Delete your account and related personal data. This cannot be undone.
+                    {t("profile.deleteDescription")}
                 </p>
                 <button
                     type="button"
                     onClick={openDeleteModal}
                     className="mt-4 inline-flex items-center rounded-md border border-rose-500/40 px-3 py-2 text-sm font-medium text-rose-500 hover:bg-rose-500/10 transition-colors"
                 >
-                    Delete Account
+                    {t("profile.deleteAccount")}
                 </button>
             </section>
         </div>
@@ -684,20 +727,20 @@ export default function ProfilePage() {
         />
         <ConfirmModal
             open={leaveModalOpen}
-            title="Unsaved changes"
-            message={LEAVE_CONFIRM_MESSAGE}
-            confirmLabel="Leave"
-            cancelLabel="Stay"
+            title={t("profile.unsavedTitle")}
+            message={t("profile.unsavedMessage")}
+            confirmLabel={t("common.leave")}
+            cancelLabel={t("common.stay")}
             confirmVariant="destructive"
             onConfirm={confirmLeave}
             onCancel={cancelLeave}
         />
         <ConfirmModal
             open={deleteModalOpen}
-            title="계정 삭제"
-            message="정말 삭제하시겠습니까? 삭제 후에는 되돌릴 수 없습니다."
-            confirmLabel={isDeleting ? "삭제 중..." : "삭제"}
-            cancelLabel="취소"
+            title={t("profile.deleteModalTitle")}
+            message={t("profile.deleteModalMessage")}
+            confirmLabel={isDeleting ? t("common.deleting") : t("common.delete")}
+            cancelLabel={t("common.cancel")}
             confirmVariant="destructive"
             isProcessing={isDeleting}
             onConfirm={() => {
@@ -707,23 +750,23 @@ export default function ProfilePage() {
         >
             <div className="space-y-2">
                 <label className="text-xs font-medium text-[var(--muted)] uppercase tracking-wider ml-1">
-                    삭제 이유 (선택)
+                    {t("profile.deleteReason")}
                 </label>
                 <textarea
                     value={deleteReason}
                     onChange={(event) => setDeleteReason(event.target.value)}
                     rows={3}
-                    placeholder="입력하지 않아도 삭제할 수 있습니다."
+                    placeholder={t("profile.deleteReasonPlaceholder")}
                     className={fieldClass}
                 />
                 <label className="text-xs font-medium text-[var(--muted)] uppercase tracking-wider ml-1">
-                    비밀번호 (필수)
+                    {t("profile.deletePassword")}
                 </label>
                 <input
                     type="password"
                     value={deletePassword}
                     onChange={(event) => setDeletePassword(event.target.value)}
-                    placeholder="현재 비밀번호를 입력하세요."
+                    placeholder={t("profile.deletePasswordPlaceholder")}
                     className={fieldClass}
                 />
                 {deleteError ? (

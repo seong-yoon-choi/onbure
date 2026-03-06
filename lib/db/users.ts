@@ -1,6 +1,12 @@
-import { notion, getDatabaseId, getTextValue, getSelectValue } from "@/lib/notion-client";
-import { getDatabaseSchema, assertDatabaseHasProperties } from "@/lib/notion-schema";
-import { buildProps } from "@/lib/notion-props";
+import {
+    notion,
+    getDatabaseId,
+    getTextValue,
+    getSelectValue,
+    getDatabaseSchema,
+    assertDatabaseHasProperties,
+    buildProps,
+} from "@/lib/db/notion-compat";
 import { isSupabaseBackend } from "@/lib/db/backend";
 import { supabaseRest } from "@/lib/supabase-rest";
 import { v4 as uuidv4 } from "uuid";
@@ -238,7 +244,7 @@ export async function getUserByEmail(email: string): Promise<User | null> {
     const props = page.properties;
 
     // Robust reading: Handle if it's still a number property or a select property
-    let availability = getSelectValue(props.availability_hours_per_week);
+    let availability = getSelectValue(props.availability_hours_per_week) || undefined;
     if (!availability && props.availability_hours_per_week?.number) {
         // Fallback for legacy number data
         availability = normalizeAvailability(props.availability_hours_per_week.number);
@@ -308,7 +314,7 @@ export async function getUserByUserId(userId: string): Promise<User | null> {
     const page = response.results[0] as any;
     const props = page.properties;
 
-    let availability = getSelectValue(props.availability_hours_per_week);
+    let availability = getSelectValue(props.availability_hours_per_week) || undefined;
     if (!availability && props.availability_hours_per_week?.number) {
         availability = normalizeAvailability(props.availability_hours_per_week.number);
     }
@@ -380,6 +386,7 @@ export async function createUser(data: {
     gender?: "male" | "female" | "other";
     age?: number;
     country?: string;
+    language?: string;
     marketingDataConsent?: boolean;
     adsReceiveConsent?: boolean;
 }) {
@@ -419,7 +426,7 @@ export async function createUser(data: {
             gender: data.gender || null,
             age: normalizedAge,
             country: normalizedCountry,
-            language: "ko",
+            language: data.language || "ko",
             skills: [],
             availability_hours_per_week: "40+",
             bio: "",
@@ -495,7 +502,7 @@ export async function createUser(data: {
         password_hash: passwordHash,
         user_id: userId,
         country: "KR", // Default
-        language: typeof navigator !== "undefined" ? navigator.language : "ko", // Browser lang or default
+        language: data.language || (typeof navigator !== "undefined" ? navigator.language : "ko"), // Selected lang or browser lang
         created_at: new Date(),
         skills: [],
         availability_hours_per_week: availability,
@@ -621,7 +628,7 @@ export async function listUsers(): Promise<User[]> {
         const props = page.properties;
 
         // Robust reading
-        let availability = getSelectValue(props.availability_hours_per_week);
+        let availability = getSelectValue(props.availability_hours_per_week) || undefined;
         if (!availability && props.availability_hours_per_week?.number) {
             availability = normalizeAvailability(props.availability_hours_per_week.number);
         }

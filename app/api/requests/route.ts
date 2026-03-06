@@ -20,6 +20,8 @@ interface TeamLeaveAlertItem {
     teamId?: string;
     status: RequestStatus;
     message?: string;
+    leftUsername?: string;
+    teamName?: string;
     createdAt: string;
 }
 
@@ -131,6 +133,68 @@ function invalidateChatDmUsersCache(userIds: Array<string | undefined | null>) {
     }
 }
 
+function invalidateTeamsListCaches(userIds: Array<string | undefined | null>) {
+    const listCache = (globalThis as { __onbureTeamsListCache?: Map<string, unknown> }).__onbureTeamsListCache;
+    const syncCache = (globalThis as { __onbureTeamsSyncCache?: Map<string, unknown> }).__onbureTeamsSyncCache;
+    for (const userId of userIds) {
+        const normalized = String(userId || "").trim();
+        if (!normalized) continue;
+        listCache?.delete(normalized);
+        syncCache?.delete(normalized);
+    }
+}
+
+function invalidateTeamScopedCaches(teamIds: Array<string | undefined | null>) {
+    const normalizedTeamIds = Array.from(
+        new Set(
+            teamIds
+                .map((teamId) => String(teamId || "").trim())
+                .filter(Boolean)
+        )
+    );
+    if (!normalizedTeamIds.length) return;
+
+    const teamDetailCache = (globalThis as { __onbureTeamDetailCache?: Map<string, unknown> }).__onbureTeamDetailCache;
+    const teamDetailSyncCache = (globalThis as { __onbureTeamDetailSyncCache?: Map<string, unknown> }).__onbureTeamDetailSyncCache;
+    const workspaceCache = (globalThis as { __onbureWorkspaceCache?: Map<string, unknown> }).__onbureWorkspaceCache;
+    const workspaceSyncCache = (globalThis as { __onbureWorkspaceSyncCache?: Map<string, unknown> }).__onbureWorkspaceSyncCache;
+
+    for (const teamId of normalizedTeamIds) {
+        const suffix = `:${teamId}`;
+        if (teamDetailCache) {
+            for (const key of teamDetailCache.keys()) {
+                if (key.endsWith(suffix)) teamDetailCache.delete(key);
+            }
+        }
+        if (teamDetailSyncCache) {
+            for (const key of teamDetailSyncCache.keys()) {
+                if (key.endsWith(suffix)) teamDetailSyncCache.delete(key);
+            }
+        }
+        if (workspaceCache) {
+            for (const key of workspaceCache.keys()) {
+                if (key.endsWith(suffix)) workspaceCache.delete(key);
+            }
+        }
+        if (workspaceSyncCache) {
+            for (const key of workspaceSyncCache.keys()) {
+                if (key.endsWith(suffix)) workspaceSyncCache.delete(key);
+            }
+        }
+    }
+}
+
+function invalidateChatTeamCaches(userIds: Array<string | undefined | null>) {
+    const chatTeamsCache = (globalThis as { __onbureChatTeamsCache?: Map<string, unknown> }).__onbureChatTeamsCache;
+    const teamMembershipCache = (globalThis as { __onbureTeamMembershipCache?: Map<string, unknown> }).__onbureTeamMembershipCache;
+    for (const userId of userIds) {
+        const normalized = String(userId || "").trim();
+        if (!normalized) continue;
+        chatTeamsCache?.delete(normalized);
+        teamMembershipCache?.delete(normalized);
+    }
+}
+
 function sortLatestFirst<T extends { createdAt?: string }>(items: T[]) {
     return [...items].sort((a, b) => {
         const aTime = new Date(a.createdAt || 0).getTime();
@@ -170,10 +234,7 @@ function readAlertMetadataValue(metadata: Record<string, unknown> | null | undef
 
 function mapTeamLeaveAuditToAlert(row: TeamLeaveAuditRow): TeamLeaveAlertItem {
     const leftUsername = readAlertMetadataValue(row.metadata, "leftUsername") || String(row.actor_user_id || "").trim();
-    const teamName = readAlertMetadataValue(row.metadata, "teamName") || String(row.team_id || "").trim() || "the team";
-    const message = leftUsername
-        ? `${leftUsername} left ${teamName}.`
-        : `A member left ${teamName}.`;
+    const teamName = readAlertMetadataValue(row.metadata, "teamName") || String(row.team_id || "").trim();
 
     return {
         id: `ALERT:${row.id}`,
@@ -183,7 +244,9 @@ function mapTeamLeaveAuditToAlert(row: TeamLeaveAuditRow): TeamLeaveAlertItem {
         toId: String(row.target_user_id || "").trim(),
         teamId: String(row.team_id || "").trim() || undefined,
         status: "ACCEPTED",
-        message,
+        message: "",
+        leftUsername: leftUsername || undefined,
+        teamName: teamName || undefined,
         createdAt: String(row.created_at || new Date().toISOString()),
     };
 }
@@ -532,6 +595,7 @@ export async function PUT(req: Request) {
 
         const canonicalRequestId = authorizedRequest.requestId || authorizedRequest.id;
         const updated = await requestsDb.updateRequestStatus(type, canonicalRequestId, status);
+        let membershipChanged: { teamId: string; userId: string } | null = null;
 
         if (status === "ACCEPTED") {
             if (type === "INVITE" || type === "JOIN") {
@@ -552,6 +616,7 @@ export async function PUT(req: Request) {
                 try {
                     const { addMemberToTeam } = await import("@/lib/db/teams");
                     await addMemberToTeam(resolvedTeamId, resolvedUserId);
+                    membershipChanged = { teamId: resolvedTeamId, userId: resolvedUserId };
                     await auditDb.appendAuditLog({
                         category: "team",
                         event: "team_membership_changed",
@@ -574,6 +639,11 @@ export async function PUT(req: Request) {
         if (type === "FRIEND") {
             invalidateFriendsCache([updated.fromId, updated.toId, updated.userId, currentUserId]);
             invalidateChatDmUsersCache([updated.fromId, updated.toId, updated.userId, currentUserId]);
+        }
+        if (membershipChanged) {
+            invalidateTeamsListCaches([updated.fromId, updated.toId, updated.userId, currentUserId, membershipChanged.userId]);
+            invalidateTeamScopedCaches([updated.teamId, authorizedRequest.teamId, membershipChanged.teamId]);
+            invalidateChatTeamCaches([updated.fromId, updated.toId, updated.userId, currentUserId, membershipChanged.userId]);
         }
         await auditDb.appendAuditLog({
             category: "request",

@@ -6,12 +6,14 @@ import {
 } from "./types";
 import { clamp, clampRange, toEpochMs, uniqueMessageKey, dedupeMessages, previewText, readSeenMap, writeSeenMap } from "./utils";
 import { useSession } from "@/lib/supabase/useSession";
+import { useLanguage } from "@/components/providers";
 
 const STORAGE_KEY = "onbure.chatWidget.rect";
 
 export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; onClose: () => void; openDmRequest?: OpenDmRequest | null }) {
 
   const { data: session } = useSession();
+  const { t } = useLanguage();
   const router = useRouter();
   const currentUserId = (session?.user as { id?: string } | undefined)?.id || "";
 
@@ -34,7 +36,7 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
   const [activeThread, setActiveThread] = useState<ThreadItem | null>(null);
   const [activeDmUserId, setActiveDmUserId] = useState<string | null>(null);
   const [activeTeamId, setActiveTeamId] = useState<string | null>(null);
-  const [activeThreadLabel, setActiveThreadLabel] = useState<string>("Choose a conversation");
+  const [activeThreadLabel, setActiveThreadLabel] = useState<string>(t("chat.chooseConversation"));
   const [threadLoading, setThreadLoading] = useState(false);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -61,8 +63,9 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
   const isPageVisible = () => (typeof document === "undefined" ? true : document.visibilityState === "visible");
 
   useEffect(() => {
+    void t;
     setMounted(true);
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -343,19 +346,19 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
     if (showLoader) setMessagesLoading(true);
     try {
       const res = await fetch(`/api/chat/messages?threadId=${encodeURIComponent(threadId)}`);
-      if (!res.ok) throw new Error("Failed to load messages");
+      if (!res.ok) throw new Error(t("chat.errorLoadMessages"));
       const data = (await res.json()) as MessageItem[];
       const deduped = dedupeMessages(data);
       setMessages(deduped);
       return deduped;
     } catch (error) {
       console.error(error);
-      setErrorText("Failed to load messages.");
+      setErrorText(t("chat.errorLoadMessages"));
       return [] as MessageItem[];
     } finally {
       if (showLoader) setMessagesLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const fetchDmLastMessagePreview = useCallback(async (users: DmUserItem[]) => {
     if (!users.length || !currentUserId) {
@@ -377,21 +380,21 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
             });
 
             if (!threadRes.ok) {
-              nextPreview[user.userId] = "No messages yet.";
+              nextPreview[user.userId] = t("chat.noMessagesYet");
               nextUnreadCount[user.userId] = 0;
               return;
             }
 
             const thread = (await threadRes.json()) as ThreadDirectoryItem;
             if (!thread?.threadId) {
-              nextPreview[user.userId] = "No messages yet.";
+              nextPreview[user.userId] = t("chat.noMessagesYet");
               nextUnreadCount[user.userId] = 0;
               return;
             }
 
             const messagesRes = await fetch(`/api/chat/messages?threadId=${encodeURIComponent(thread.threadId)}`);
             if (!messagesRes.ok) {
-              nextPreview[user.userId] = "No messages yet.";
+              nextPreview[user.userId] = t("chat.noMessagesYet");
               nextUnreadCount[user.userId] = 0;
               return;
             }
@@ -413,7 +416,7 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
             }, 0);
             nextUnreadCount[user.userId] = isActiveDm ? 0 : unreadCount;
           } catch {
-            nextPreview[user.userId] = "No messages yet.";
+            nextPreview[user.userId] = t("chat.noMessagesYet");
             nextUnreadCount[user.userId] = 0;
           }
         })
@@ -426,13 +429,13 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
       const fallback: Record<string, string> = {};
       const fallbackUnread: Record<string, number> = {};
       for (const user of users) {
-        fallback[user.userId] = "No messages yet.";
+        fallback[user.userId] = t("chat.noMessagesYet");
         fallbackUnread[user.userId] = 0;
       }
       setDmLastMessageByUserId(fallback);
       setDmUnreadCountByUserId(fallbackUnread);
     }
-  }, [currentUserId, activeThread, activeDmUserId]);
+  }, [currentUserId, activeThread, activeDmUserId, t]);
 
   const fetchTeamLastMessagePreview = useCallback(async (teamItems: TeamItem[]) => {
     if (!teamItems.length || !currentUserId) {
@@ -455,21 +458,21 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
             });
 
             if (!threadRes.ok) {
-              nextPreview[team.teamId] = "No messages yet.";
+              nextPreview[team.teamId] = t("chat.noMessagesYet");
               nextUnreadCount[team.teamId] = 0;
               return;
             }
 
             const thread = (await threadRes.json()) as ThreadItem;
             if (!thread?.threadId) {
-              nextPreview[team.teamId] = "No messages yet.";
+              nextPreview[team.teamId] = t("chat.noMessagesYet");
               nextUnreadCount[team.teamId] = 0;
               return;
             }
 
             const messagesRes = await fetch(`/api/chat/messages?threadId=${encodeURIComponent(thread.threadId)}`);
             if (!messagesRes.ok) {
-              nextPreview[team.teamId] = "No messages yet.";
+              nextPreview[team.teamId] = t("chat.noMessagesYet");
               nextUnreadCount[team.teamId] = 0;
               return;
             }
@@ -494,7 +497,7 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
 
             nextUnreadCount[team.teamId] = isActiveTeam ? 0 : unreadCount;
           } catch {
-            nextPreview[team.teamId] = "No messages yet.";
+            nextPreview[team.teamId] = t("chat.noMessagesYet");
             nextUnreadCount[team.teamId] = 0;
           }
         })
@@ -507,13 +510,13 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
       const fallbackPreview: Record<string, string> = {};
       const fallbackUnread: Record<string, number> = {};
       for (const team of teamItems) {
-        fallbackPreview[team.teamId] = "No messages yet.";
+        fallbackPreview[team.teamId] = t("chat.noMessagesYet");
         fallbackUnread[team.teamId] = 0;
       }
       setTeamLastMessageByTeamId(fallbackPreview);
       setTeamUnreadCountByTeamId(fallbackUnread);
     }
-  }, [currentUserId, activeThread, activeTeamId, markTeamThreadSeen]);
+  }, [currentUserId, activeThread, activeTeamId, markTeamThreadSeen, t]);
 
   const fetchDirectory = useCallback(async () => {
     setDirectoryLoading(true);
@@ -539,19 +542,19 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
       }
 
       if (!hasAnySuccess) {
-        throw new Error("Failed to load chat directory");
+        throw new Error(t("chat.errorLoadDirectory"));
       }
 
       if (!usersRes.ok || !teamsRes.ok) {
-        setErrorText("Some chat data is temporarily unavailable.");
+        setErrorText(t("chat.errorPartialDirectory"));
       }
     } catch (error) {
       console.error(error);
-      setErrorText("Failed to load chat users/teams.");
+      setErrorText(t("chat.errorLoadDirectory"));
     } finally {
       setDirectoryLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -618,13 +621,13 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
     setActiveThread(null);
     setActiveDmUserId(null);
     setActiveTeamId(null);
-    setActiveThreadLabel("Choose a conversation");
+    setActiveThreadLabel(t("chat.chooseConversation"));
     setMessages([]);
     setDraft("");
     setErrorText("");
     setDmReadReceipt(null);
     setProfileMenu(null);
-  }, [isOpen]);
+  }, [isOpen, t]);
 
   useEffect(() => {
     function onConnectionsUpdated() {
@@ -709,14 +712,14 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ otherUserId: userId }),
       });
-      if (!res.ok) throw new Error("Failed to open DM thread");
+      if (!res.ok) throw new Error(t("chat.errorOpenDm"));
       const thread = (await res.json()) as ThreadItem;
       const matchedUser = dmUsers.find((item) => item.userId === userId);
       setActiveThread(thread);
       setActiveDmUserId(userId);
       setActiveTeamId(null);
       setActiveTab("dm");
-      setActiveThreadLabel(matchedUser?.username || fallbackLabel || "Chat");
+      setActiveThreadLabel(matchedUser?.username || fallbackLabel || t("chat.defaultThreadLabel"));
       const loadedMessages = await fetchMessages(thread.threadId);
       const latest = loadedMessages[loadedMessages.length - 1];
       await markCurrentUserSeen(thread.threadId, latest?.createdAt || Date.now());
@@ -730,11 +733,11 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
       }));
     } catch (error) {
       console.error(error);
-      setErrorText("Failed to open DM thread.");
+      setErrorText(t("chat.errorOpenDm"));
     } finally {
       setThreadLoading(false);
     }
-  }, [dmUsers, fetchMessages, markCurrentUserSeen]);
+  }, [dmUsers, fetchMessages, markCurrentUserSeen, t]);
 
   const openDmThread = async (user: DmUserItem) => {
     await openDmThreadByUserId(user.userId, user.username);
@@ -749,7 +752,7 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ teamId: team.teamId }),
       });
-      if (!res.ok) throw new Error("Failed to open team thread");
+      if (!res.ok) throw new Error(t("chat.errorOpenTeam"));
       const thread = (await res.json()) as ThreadItem;
       setActiveThread(thread);
       setActiveDmUserId(null);
@@ -769,7 +772,7 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
       }));
     } catch (error) {
       console.error(error);
-      setErrorText("Failed to open team thread.");
+      setErrorText(t("chat.errorOpenTeam"));
     } finally {
       setThreadLoading(false);
     }
@@ -801,7 +804,7 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
         }),
       });
 
-      if (!res.ok) throw new Error("Failed to send message");
+      if (!res.ok) throw new Error(t("chat.errorSendMessage"));
       const created = (await res.json()) as MessageItem;
       setMessages((prev) => dedupeMessages([...prev, created]));
       if (activeThread.type === "dm" && activeDmUserId) {
@@ -827,7 +830,7 @@ export function useChat({ isOpen, onClose, openDmRequest }: { isOpen: boolean; o
       }
     } catch (error) {
       console.error(error);
-      setErrorText("Failed to send message.");
+      setErrorText(t("chat.errorSendMessage"));
       setDraft(body);
     } finally {
       setSendLoading(false);

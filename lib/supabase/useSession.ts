@@ -39,7 +39,7 @@ export function useSession() {
             mounted = false;
             subscription.unsubscribe();
         };
-    }, []);
+    }, [supabase.auth]);
 
     // Return a shape somewhat mimicking next-auth for easier migration
     return {

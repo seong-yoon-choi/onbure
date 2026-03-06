@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/components/ui/modal";
 import { X } from "lucide-react";
+import { useLanguage } from "@/components/providers";
+import { resolveTeamApiErrorMessage } from "@/lib/i18n/team-api-errors";
 
 interface CreateTeamModalProps {
     open: boolean;
@@ -17,52 +19,17 @@ const STAGE_OPTIONS = ["idea", "mvp", "beta", "launched"] as const;
 const COMMITMENT_OPTIONS = ["1-5", "6-10", "11-20", "21-40", "40+"] as const;
 const WORK_STYLE_OPTIONS = ["async", "sync", "hybrid"] as const;
 const VISIBILITY_OPTIONS = ["private", "public"] as const;
-const STAGE_LABELS: Record<(typeof STAGE_OPTIONS)[number], string> = {
-    idea: "Idea",
-    mvp: "MVP",
-    beta: "Beta",
-    launched: "Launched",
-};
-const WORK_STYLE_LABELS: Record<(typeof WORK_STYLE_OPTIONS)[number], string> = {
-    async: "Async",
-    sync: "Sync",
-    hybrid: "Hybrid",
-};
-const VISIBILITY_LABELS: Record<(typeof VISIBILITY_OPTIONS)[number], string> = {
-    private: "Private",
-    public: "Public",
-};
-const WORK_STYLE_HELP_ITEMS = [
-    {
-        label: "Async",
-        description: "Progress does not require everyone online at the same time.",
-        example: "Leave decisions in docs/Notion and teammates respond later.",
-    },
-    {
-        label: "Sync",
-        description: "Work happens together in scheduled real-time sessions.",
-        example: "Run 2-3 meetings/calls per week for immediate decisions.",
-    },
-    {
-        label: "Hybrid",
-        description: "Default to async and use sync only for key decisions.",
-        example: "One weekly meeting, everything else in docs/chat.",
-    },
-] as const;
-const LANGUAGE_OPTIONS = [
-    { value: "ko", label: "Korean" },
-    { value: "en", label: "English" },
-    { value: "ja", label: "Japanese" },
-] as const;
+const LANGUAGE_OPTIONS = ["ko", "ja", "en", "fr", "es"] as const;
 
 export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeamModalProps) {
+    const { t } = useLanguage();
     const [step, setStep] = useState<1 | 2>(1);
     const [teamName, setTeamName] = useState("");
     const [description, setDescription] = useState("");
     const [stage, setStage] = useState<(typeof STAGE_OPTIONS)[number]>("idea");
     const [timezone, setTimezone] = useState("UTC");
 
-    const [language, setLanguage] = useState<(typeof LANGUAGE_OPTIONS)[number]["value"]>("ko");
+    const [language, setLanguage] = useState<(typeof LANGUAGE_OPTIONS)[number]>("ko");
     const [teamSize, setTeamSize] = useState<number>(1);
     const [openSlots, setOpenSlots] = useState<number>(0);
     const [openSlotsInput, setOpenSlotsInput] = useState<string>("0");
@@ -76,6 +43,61 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState("");
     const [isCreateConfirmOpen, setIsCreateConfirmOpen] = useState(false);
+
+    const stageLabels = useMemo<Record<(typeof STAGE_OPTIONS)[number], string>>(
+        () => ({
+            idea: t("team.stage.idea"),
+            mvp: t("team.stage.mvp"),
+            beta: t("team.stage.beta"),
+            launched: t("team.stage.launched"),
+        }),
+        [t]
+    );
+    const workStyleLabels = useMemo<Record<(typeof WORK_STYLE_OPTIONS)[number], string>>(
+        () => ({
+            async: t("team.workStyle.async"),
+            sync: t("team.workStyle.sync"),
+            hybrid: t("team.workStyle.hybrid"),
+        }),
+        [t]
+    );
+    const visibilityLabels = useMemo<Record<(typeof VISIBILITY_OPTIONS)[number], string>>(
+        () => ({
+            private: t("visibility.private"),
+            public: t("visibility.public"),
+        }),
+        [t]
+    );
+    const languageLabels = useMemo<Record<(typeof LANGUAGE_OPTIONS)[number], string>>(
+        () => ({
+            ko: t("language.korean"),
+            ja: t("language.japanese"),
+            en: t("language.english"),
+            fr: t("language.french"),
+            es: t("language.spanish"),
+        }),
+        [t]
+    );
+    const workStyleHelpItems = useMemo(
+        () => [
+            {
+                label: t("team.workStyle.async"),
+                description: t("team.workStyle.async.description"),
+                example: t("team.workStyle.async.example"),
+            },
+            {
+                label: t("team.workStyle.sync"),
+                description: t("team.workStyle.sync.description"),
+                example: t("team.workStyle.sync.example"),
+            },
+            {
+                label: t("team.workStyle.hybrid"),
+                description: t("team.workStyle.hybrid.description"),
+                example: t("team.workStyle.hybrid.example"),
+            },
+        ],
+        [t]
+    );
 
     useEffect(() => {
         if (!open) return;
@@ -158,7 +180,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
 
         const normalizedName = teamName.trim().replace(/\s+/g, " ");
         if (!normalizedName) {
-            setError("Team name is required.");
+            setError(t("createTeam.error.nameRequired"));
             return;
         }
 
@@ -187,7 +209,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
 
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                setError(data.error || "Failed to create team.");
+                setError(resolveTeamApiErrorMessage(data?.error, t, "createTeam.error.failed"));
                 setIsSubmitting(false);
                 return;
             }
@@ -204,7 +226,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
             }
         } catch (e) {
             console.error(e);
-            setError("Failed to create team.");
+            setError(t("createTeam.error.failed"));
             setIsSubmitting(false);
         }
     };
@@ -213,7 +235,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
         if (isSubmitting) return;
         const normalizedName = teamName.trim().replace(/\s+/g, " ");
         if (!normalizedName) {
-            setError("Team name is required.");
+            setError(t("createTeam.error.nameRequired"));
             return;
         }
         setIsCreateConfirmOpen(true);
@@ -226,11 +248,13 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
             <div className="w-full max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] shadow-2xl">
                 <div className="px-5 py-4 border-b border-[var(--border)]">
                     <div className="flex items-center justify-between gap-3">
-                        <h3 className="text-base font-semibold text-[var(--fg)]">Create Team</h3>
-                        <span className="text-xs text-[var(--muted)]">Step {step} / 2</span>
+                        <h3 className="text-base font-semibold text-[var(--fg)]">{t("createTeam.title")}</h3>
+                        <span className="text-xs text-[var(--muted)]">
+                            {t("createTeam.stepIndicator", { current: step, total: 2 })}
+                        </span>
                     </div>
                     <p className="text-xs text-[var(--muted)] mt-1">
-                        {step === 1 ? "Essential team info" : "Optional team profile info"}
+                        {step === 1 ? t("createTeam.step1Description") : t("createTeam.step2Description")}
                     </p>
                 </div>
 
@@ -238,24 +262,24 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                     {step === 1 && (
                         <>
                             <div className="space-y-1">
-                                <label className="text-xs text-[var(--muted)]">Team Name *</label>
+                                <label className="text-xs text-[var(--muted)]">{t("createTeam.field.name")}</label>
                                 <input
                                     value={teamName}
                                     onChange={(event) => setTeamName(event.target.value)}
                                     maxLength={60}
                                     className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
-                                    placeholder="e.g. Product Design Squad"
+                                    placeholder={t("createTeam.placeholder.name")}
                                 />
                             </div>
 
                             <div className="space-y-1">
-                                <label className="text-xs text-[var(--muted)]">Team Description (max 300)</label>
+                                <label className="text-xs text-[var(--muted)]">{t("createTeam.field.description")}</label>
                                 <textarea
                                     value={description}
                                     onChange={(event) => setDescription(event.target.value.slice(0, MAX_DESCRIPTION_LENGTH))}
                                     rows={6}
                                     className="w-full h-40 resize-none overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
-                                    placeholder="Describe your team goals, product direction, and what kind of collaborators you need."
+                                    placeholder={t("createTeam.placeholder.description")}
                                 />
                                 <div className="text-[10px] text-[var(--muted)] text-right">
                                     {description.length}/{MAX_DESCRIPTION_LENGTH}
@@ -264,7 +288,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div className="space-y-1">
-                                    <label className="text-xs text-[var(--muted)]">Stage</label>
+                                    <label className="text-xs text-[var(--muted)]">{t("team.field.stage")}</label>
                                     <select
                                         value={stage}
                                         onChange={(event) => setStage(event.target.value as (typeof STAGE_OPTIONS)[number])}
@@ -272,14 +296,14 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                     >
                                         {STAGE_OPTIONS.map((option) => (
                                             <option key={option} value={option}>
-                                                {STAGE_LABELS[option]}
+                                                {stageLabels[option]}
                                             </option>
                                         ))}
                                     </select>
                                 </div>
 
                                 <div className="space-y-1">
-                                    <label className="text-xs text-[var(--muted)]">Time Zone</label>
+                                    <label className="text-xs text-[var(--muted)]">{t("team.field.timeZone")}</label>
                                     <select
                                         value={timezone}
                                         onChange={(event) => setTimezone(event.target.value)}
@@ -299,15 +323,15 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                     {step === 2 && (
                         <>
                             <div className="space-y-1">
-                                <label className="text-xs text-[var(--muted)]">Team Language</label>
+                                <label className="text-xs text-[var(--muted)]">{t("team.field.teamLanguage")}</label>
                                 <select
                                     value={language}
-                                    onChange={(event) => setLanguage(event.target.value as (typeof LANGUAGE_OPTIONS)[number]["value"])}
+                                    onChange={(event) => setLanguage(event.target.value as (typeof LANGUAGE_OPTIONS)[number])}
                                     className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
                                 >
                                     {LANGUAGE_OPTIONS.map((option) => (
-                                        <option key={option.value} value={option.value}>
-                                            {option.label}
+                                        <option key={option} value={option}>
+                                            {languageLabels[option]}
                                         </option>
                                     ))}
                                 </select>
@@ -315,7 +339,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div className="space-y-1">
-                                    <label className="text-xs text-[var(--muted)]">Current Members</label>
+                                    <label className="text-xs text-[var(--muted)]">{t("team.field.currentMembers")}</label>
                                     <input
                                         type="number"
                                         min={1}
@@ -323,11 +347,11 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                         readOnly
                                         className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 text-sm text-[var(--muted)] focus:outline-none"
                                     />
-                                    <p className="text-[10px] text-[var(--muted)]">Starts with the creator (1 member).</p>
+                                    <p className="text-[10px] text-[var(--muted)]">{t("createTeam.currentMembersHint")}</p>
                                 </div>
 
                                 <div className="space-y-1">
-                                    <label className="text-xs text-[var(--muted)]">Max People</label>
+                                    <label className="text-xs text-[var(--muted)]">{t("team.field.maxPeople")}</label>
                                     <input
                                         type="text"
                                         inputMode="numeric"
@@ -358,7 +382,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div className="space-y-1">
-                                    <label className="text-xs text-[var(--muted)]">Weekly Commitment</label>
+                                    <label className="text-xs text-[var(--muted)]">{t("team.field.weeklyCommitment")}</label>
                                     <select
                                         value={commitmentHoursPerWeek}
                                         onChange={(event) =>
@@ -375,7 +399,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                 </div>
 
                                 <div className="space-y-1">
-                                    <label className="text-xs text-[var(--muted)]">Visibility</label>
+                                    <label className="text-xs text-[var(--muted)]">{t("team.field.visibility")}</label>
                                     <select
                                         value={visibility}
                                         onChange={(event) => setVisibility(event.target.value as (typeof VISIBILITY_OPTIONS)[number])}
@@ -383,7 +407,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                     >
                                         {VISIBILITY_OPTIONS.map((option) => (
                                             <option key={option} value={option}>
-                                                {VISIBILITY_LABELS[option]}
+                                                {visibilityLabels[option]}
                                             </option>
                                         ))}
                                     </select>
@@ -392,11 +416,11 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
 
                             <div className="space-y-1">
                                 <div className="flex items-center gap-1.5">
-                                    <label className="text-xs text-[var(--muted)]">Work Style</label>
+                                    <label className="text-xs text-[var(--muted)]">{t("team.field.workStyle")}</label>
                                     <span className="group relative inline-flex h-4 w-4 items-center justify-center">
                                         <button
                                             type="button"
-                                            aria-label="Work style guide"
+                                            aria-label={t("team.workStyleGuideAria")}
                                             onMouseEnter={(event) => {
                                                 const rect = event.currentTarget.getBoundingClientRect();
                                                 setWorkStyleTooltip({ x: rect.right + 8, y: rect.top + rect.height / 2 });
@@ -419,14 +443,14 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                 >
                                     {WORK_STYLE_OPTIONS.map((option) => (
                                         <option key={option} value={option}>
-                                            {WORK_STYLE_LABELS[option]}
+                                            {workStyleLabels[option]}
                                         </option>
                                     ))}
                                 </select>
                             </div>
 
                             <div className="space-y-1">
-                                <label className="text-xs text-[var(--muted)]">Recruiting Roles</label>
+                                <label className="text-xs text-[var(--muted)]">{t("team.field.recruitingRoles")}</label>
                                 <div className="flex gap-2">
                                     <input
                                         value={roleInput}
@@ -438,7 +462,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                             }
                                         }}
                                         className="flex-1 h-9 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-3 text-sm text-[var(--fg)] focus:outline-none focus:border-[var(--ring)]"
-                                        placeholder="e.g. Frontend Engineer"
+                                        placeholder={t("team.rolePlaceholder")}
                                     />
                                     <Button
                                         type="button"
@@ -448,7 +472,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                         disabled={!canAddRole}
                                         className="h-9"
                                     >
-                                        Add
+                                        {t("common.add")}
                                     </Button>
                                 </div>
 
@@ -462,7 +486,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                                 {role}
                                                 <button
                                                     type="button"
-                                                    aria-label={`Remove ${role}`}
+                                                    aria-label={`${t("common.remove")} ${role}`}
                                                     className="text-[var(--muted)] hover:text-[var(--fg)]"
                                                     onClick={() => removeRole(role)}
                                                 >
@@ -493,7 +517,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                 }}
                                 disabled={isSubmitting}
                             >
-                                Cancel
+                                {t("common.cancel")}
                             </Button>
                             <Button
                                 type="button"
@@ -501,7 +525,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                 onClick={() => setStep(2)}
                                 disabled={!canGoNext || isSubmitting}
                             >
-                                Next
+                                {t("createTeam.next")}
                             </Button>
                         </>
                     ) : (
@@ -513,7 +537,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                 onClick={() => setStep(1)}
                                 disabled={isSubmitting}
                             >
-                                Back
+                                {t("createTeam.back")}
                             </Button>
                             <Button
                                 type="button"
@@ -521,7 +545,7 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                                 onClick={requestCreateConfirm}
                                 disabled={isSubmitting}
                             >
-                                {isSubmitting ? "Creating..." : "Create"}
+                                {isSubmitting ? t("createTeam.creating") : t("createTeam.create")}
                             </Button>
                         </>
                     )}
@@ -530,10 +554,10 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
 
             <ConfirmModal
                 open={isCreateConfirmOpen}
-                title="Create Team"
-                message="Are you sure you want to create this team?"
-                confirmLabel={isSubmitting ? "Creating..." : "Create"}
-                cancelLabel="Cancel"
+                title={t("createTeam.title")}
+                message={t("createTeam.confirmMessage")}
+                confirmLabel={isSubmitting ? t("createTeam.creating") : t("createTeam.create")}
+                cancelLabel={t("common.cancel")}
                 isProcessing={isSubmitting}
                 onCancel={() => setIsCreateConfirmOpen(false)}
                 onConfirm={() => {
@@ -546,11 +570,11 @@ export default function CreateTeamModal({ open, onClose, onCreated }: CreateTeam
                     className="pointer-events-none fixed z-[90] max-w-[320px] rounded border border-[var(--border)] bg-[var(--card-bg)] px-2.5 py-1.5 text-xs text-[var(--fg)] shadow-md"
                     style={{ left: workStyleTooltip.x, top: workStyleTooltip.y, transform: "translateY(-50%)" }}
                 >
-                    {WORK_STYLE_HELP_ITEMS.map((item) => (
+                    {workStyleHelpItems.map((item) => (
                         <div key={item.label} className="mb-1 last:mb-0">
                             <span className="text-[var(--fg)]">{item.label}</span>: {item.description}
                             <br />
-                            Example: {item.example}
+                            {t("team.workStyle.examplePrefix")}: {item.example}
                         </div>
                     ))}
                 </div>

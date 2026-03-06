@@ -1,5 +1,11 @@
-import { notion, getDatabaseId, getTextValue, getSelectValue } from "@/lib/notion-client";
-import { getDatabaseSchema, getTitlePropertyName } from "@/lib/notion-schema";
+import {
+    notion,
+    getDatabaseId,
+    getTextValue,
+    getSelectValue,
+    getDatabaseSchema,
+    getTitlePropertyName,
+} from "@/lib/db/notion-compat";
 import { getUserByUserId } from "@/lib/db/users";
 import { isSupabaseBackend } from "@/lib/db/backend";
 import { supabaseRest } from "@/lib/supabase-rest";

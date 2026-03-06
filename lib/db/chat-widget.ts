@@ -1,6 +1,8 @@
 import { getUserByUserId, listUsers, listUsersByUserIds } from "@/lib/db/users";
 import { getTeamById, getTeamsForUser } from "@/lib/db/teams";
 import { getAcceptedConnectionPartnerIds } from "@/lib/db/requests";
+import { normalizeLanguage } from "@/lib/i18n";
+import { translateTextsWithDeepL } from "@/lib/server/deepl";
 import { supabaseRest } from "@/lib/supabase-rest";
 import { v4 as uuidv4 } from "uuid";
 
@@ -452,7 +454,46 @@ export async function listMessagesForThread(
             usernameByUserId = new Map(users.map((user) => [user.userId, user.username || ""]));
         }
     }
-    return rows.map((row) => mapSupabaseMessageRow(row, usernameByUserId));
+
+    const viewer = await getUserByUserId(normalizedUserId);
+    const viewerLanguage = normalizeLanguage(viewer?.language || "ko");
+    const textsToTranslate = Array.from(
+        new Set(
+            rows
+                .filter((row) => String(row.sender_user_id || "").trim() !== normalizedUserId)
+                .map((row) => String(row.body_original || ""))
+                .map((text) => text.trim())
+                .filter(Boolean)
+        )
+    );
+    const translatedByOriginal = await translateTextsWithDeepL(textsToTranslate, viewerLanguage);
+
+    return rows.map((row) => {
+        const message = mapSupabaseMessageRow(row, usernameByUserId);
+        const senderId = String(row.sender_user_id || "").trim();
+        const originalBody = String(row.body_original || "");
+        if (!originalBody.trim() || senderId === normalizedUserId) {
+            return message;
+        }
+
+        const storedTargetRaw = String(row.translated_lang || "").trim();
+        const storedTarget =
+            storedTargetRaw.length > 0 ? normalizeLanguage(storedTargetRaw) : null;
+        const storedTranslation = String(row.body_translated || "").trim();
+        const translatedBody =
+            (storedTarget === viewerLanguage && storedTranslation
+                ? storedTranslation
+                : translatedByOriginal.get(originalBody.trim()) || "") || "";
+        if (!translatedBody || translatedBody === originalBody) {
+            return message;
+        }
+
+        return {
+            ...message,
+            bodyTranslated: translatedBody,
+            translatedLang: viewerLanguage,
+        };
+    });
 }
 
 export async function createMessageForThread(

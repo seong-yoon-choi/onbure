@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { MessageSquare, Users } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/components/providers";
 
 interface ChatThread {
     id: string;
@@ -14,6 +15,7 @@ interface ChatThread {
 }
 
 export default function ChatListPage() {
+    const { t } = useLanguage();
     const [threads, setThreads] = useState<ChatThread[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -33,17 +35,17 @@ export default function ChatListPage() {
     return (
         <div className="space-y-6">
             <div className="flex flex-col gap-2">
-                <h1 className="text-3xl font-bold text-white">Chat</h1>
-                <p className="text-slate-400">Your conversations and team chats.</p>
+                <h1 className="text-3xl font-bold text-white">{t("chat.widgetTitle")}</h1>
+                <p className="text-slate-400">{t("chat.pageSubtitle")}</p>
             </div>
 
             <div className="grid gap-3">
                 {loading ? (
-                    <div>Loading...</div>
+                    <div>{t("common.loading")}</div>
                 ) : threads.length === 0 ? (
                     <div className="text-center py-20 border border-dashed border-slate-800 rounded-xl">
                         <MessageSquare className="w-12 h-12 text-slate-600 mx-auto mb-4" />
-                        <p className="text-slate-500">No active conversations.</p>
+                        <p className="text-slate-500">{t("chat.activeConversationsNone")}</p>
                     </div>
                 ) : (
                     threads.map((thread) => (
@@ -56,7 +58,7 @@ export default function ChatListPage() {
                                     {thread.type === "TEAM" ? <Users className="w-6 h-6" /> : <MessageSquare className="w-6 h-6" />}
                                 </div>
                                 <div>
-                                    <h3 className="font-bold text-white">{thread.title || "Chat"}</h3>
+                                    <h3 className="font-bold text-white">{thread.title || t("chat.defaultThreadLabel")}</h3>
                                     <p className="text-xs text-slate-500 uppercase tracking-widest">{thread.type}</p>
                                 </div>
                             </Card>
