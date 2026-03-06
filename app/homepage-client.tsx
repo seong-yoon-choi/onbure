@@ -431,9 +431,12 @@ export default function HomePageClient() {
                   <p className="text-xs uppercase tracking-[0.2em] text-white/45">{copy.workflowKicker}</p>
                   <p className="mt-2 text-2xl font-semibold tracking-tight">{copy.workflowTitle}</p>
                 </div>
-                <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60">
+                <Link
+                  href="/discovery"
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
+                >
                   {copy.workflowPill}
-                </div>
+                </Link>
               </div>
 
               <div className="space-y-4">
