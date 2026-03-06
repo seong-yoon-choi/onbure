@@ -4,10 +4,17 @@ import { absoluteUrl } from "@/lib/seo";
 const LEGAL_REGION_SEGMENTS = ["kr", "cn", "jp", "us", "eu"] as const;
 const LEGAL_LAST_UPDATED = new Date("2026-02-20");
 const MARKETING_LAST_UPDATED = new Date("2026-02-26");
+const HOME_LAST_UPDATED = new Date("2026-03-06");
 const REGISTER_LAST_UPDATED = new Date("2026-03-06");
 
 export default function sitemap(): MetadataRoute.Sitemap {
   return [
+    {
+      url: absoluteUrl("/"),
+      lastModified: HOME_LAST_UPDATED,
+      changeFrequency: "weekly",
+      priority: 1,
+    },
     {
       url: absoluteUrl("/register"),
       lastModified: REGISTER_LAST_UPDATED,
