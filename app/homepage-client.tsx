@@ -103,8 +103,8 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     navLogIn: "로그인",
     navCreateAccount: "계정 만들기",
     title1: "함께할 사람을 찾아서,",
-    title2: "여러분의 아이디어를 프로젝트로 만들고,",
-    title3: "함께 차근차근 실현해 보세요.",
+    title2: "프로젝트를 만들고,",
+    title3: "여러분의 아이디어를 실현시켜 보세요!",
     description:
       "Onbure는 같은 열정과 협업 감각을 가진 사람들을 만나고, 팀을 둘러보고, 아이디어를 실제 프로젝트로 자연스럽게 구체화할 수 있도록 요청, 워크스페이스, 공유 흐름을 한곳에 모아둔 협업 플랫폼입니다.",
     heroOpenApp: "앱 둘러보기",
