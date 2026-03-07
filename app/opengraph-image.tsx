@@ -59,9 +59,10 @@ export default function OpenGraphImage() {
                 fontSize: 78,
                 fontWeight: 800,
                 lineHeight: 1.05,
+                maxWidth: "900px",
               }}
             >
-              Team collaboration with less overhead.
+              Find global partners and make your idea real.
             </div>
             <div
               style={{
@@ -71,7 +72,7 @@ export default function OpenGraphImage() {
                 color: "#dbeafe",
               }}
             >
-              Shared workspaces, requests, and team coordination for builders.
+              Search worldwide or create a profile and collaborate smoothly with live translation.
             </div>
           </div>
         </div>

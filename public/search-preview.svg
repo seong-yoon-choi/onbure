@@ -1,6 +1,6 @@
 <svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">Onbure collaboration workspace preview</title>
-  <desc id="desc">Illustrated preview for Onbure showing a collaboration workspace, request inbox, and team discovery cards.</desc>
+  <title id="title">Onbure global collaboration preview</title>
+  <desc id="desc">Illustrated preview for Onbure showing global partner discovery, live translation, and profile visibility.</desc>
   <defs>
     <linearGradient id="bg" x1="88" y1="50" x2="1120" y2="630" gradientUnits="userSpaceOnUse">
       <stop stop-color="#081225"/>
@@ -17,26 +17,26 @@
   <circle cx="1030" cy="110" r="140" fill="#2DD4BF" fill-opacity="0.12"/>
   <rect x="56" y="52" width="1088" height="526" rx="32" fill="#081225" fill-opacity="0.32" stroke="rgba(248,250,252,0.22)"/>
   <text x="96" y="122" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" letter-spacing="5">ONBURE</text>
-  <text x="96" y="230" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="74" font-weight="800">Team collaboration</text>
-  <text x="96" y="308" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="74" font-weight="800">without scattered tools.</text>
-  <text x="96" y="372" fill="#DBEAFE" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="500">Shared workspaces, request inboxes, and team discovery in one product.</text>
+  <text x="96" y="230" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="74" font-weight="800">Find global partners</text>
+  <text x="96" y="308" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="74" font-weight="800">and make ideas real.</text>
+  <text x="96" y="372" fill="#DBEAFE" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="500">Search worldwide or create a profile and collaborate with live translation.</text>
   <rect x="92" y="430" width="270" height="96" rx="24" fill="#FFFFFF" fill-opacity="0.08" stroke="rgba(255,255,255,0.12)"/>
-  <text x="122" y="468" fill="#FCD34D" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="3">REQUEST INBOX</text>
-  <text x="122" y="504" fill="#FEF3C7" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">Keep approvals visible</text>
+  <text x="122" y="468" fill="#FCD34D" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="3">GLOBAL SEARCH</text>
+  <text x="122" y="504" fill="#FEF3C7" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">Meet strong matches</text>
   <rect x="392" y="430" width="290" height="96" rx="24" fill="#FFFFFF" fill-opacity="0.08" stroke="rgba(255,255,255,0.12)"/>
-  <text x="422" y="468" fill="#99F6E4" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="3">TEAM DISCOVERY</text>
-  <text x="422" y="504" fill="#CCFBF1" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">Find the right collaborators</text>
+  <text x="422" y="468" fill="#99F6E4" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="3">PROFILE WORLDWIDE</text>
+  <text x="422" y="504" fill="#CCFBF1" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">Be discovered anywhere</text>
   <rect x="764" y="144" width="292" height="322" rx="28" fill="#FFFFFF" fill-opacity="0.09" stroke="rgba(255,255,255,0.15)"/>
   <rect x="796" y="180" width="228" height="28" rx="14" fill="#FFFFFF" fill-opacity="0.16"/>
   <rect x="796" y="228" width="228" height="70" rx="24" fill="#F59E0B" fill-opacity="0.16" stroke="rgba(245,158,11,0.22)"/>
-  <text x="822" y="257" fill="#FEF3C7" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" letter-spacing="2">REQUESTS</text>
-  <text x="822" y="286" fill="#FFF7ED" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700">Invite, approve, ship</text>
+  <text x="822" y="257" fill="#FEF3C7" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" letter-spacing="2">SHARE YOUR IDEA</text>
+  <text x="822" y="286" fill="#FFF7ED" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700">Post what you want to build</text>
   <rect x="796" y="320" width="108" height="112" rx="22" fill="#2DD4BF" fill-opacity="0.14" stroke="rgba(45,212,191,0.22)"/>
   <rect x="916" y="320" width="108" height="112" rx="22" fill="#FFFFFF" fill-opacity="0.08" stroke="rgba(255,255,255,0.12)"/>
-  <text x="812" y="355" fill="#99F6E4" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="2">PEOPLE</text>
-  <text x="812" y="390" fill="#ECFEFF" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Profiles</text>
-  <text x="932" y="355" fill="#E2E8F0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="2">WORKSPACE</text>
-  <text x="932" y="390" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Context</text>
+  <text x="812" y="355" fill="#99F6E4" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="2">SEARCH</text>
+  <text x="812" y="390" fill="#ECFEFF" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Worldwide</text>
+  <text x="932" y="355" fill="#E2E8F0" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="700" letter-spacing="2">TRANSLATE</text>
+  <text x="932" y="390" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">In real time</text>
   <rect x="736" y="494" width="348" height="38" rx="19" fill="#FFFFFF" fill-opacity="0.08"/>
-  <text x="786" y="520" fill="#E2E8F0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="600">Built for startup teams and collaborators</text>
+  <text x="768" y="520" fill="#E2E8F0" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="600">Search globally, post your profile, and build together with live translation</text>
 </svg>

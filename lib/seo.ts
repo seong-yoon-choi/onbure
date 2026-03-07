@@ -2,14 +2,14 @@ import type { Metadata } from "next";
 
 export const SITE_NAME = "Onbure";
 export const SITE_DESCRIPTION =
-  "Onbure helps people with ideas find the right collaborators, start projects together, and turn ideas into reality.";
+  "Onbure helps people with ideas find global partners, get discovered through profiles, and move from idea to execution with live translation.";
 export const SITE_KEYWORDS = [
   "Onbure",
-  "team collaboration",
-  "workspace management",
-  "startup teams",
-  "project coordination",
-  "team discovery",
+  "global collaboration",
+  "live translation",
+  "startup partners",
+  "project execution",
+  "partner discovery",
 ];
 
 const DEFAULT_DEV_SITE_URL = "http://localhost:3000";

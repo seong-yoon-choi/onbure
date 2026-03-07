@@ -59,9 +59,10 @@ export default function TwitterImage() {
                 fontSize: 78,
                 fontWeight: 800,
                 lineHeight: 1.05,
+                maxWidth: "900px",
               }}
             >
-              Collaboration for modern product teams.
+              Find global partners and make your idea real.
             </div>
             <div
               style={{
@@ -71,7 +72,7 @@ export default function TwitterImage() {
                 color: "#dbeafe",
               }}
             >
-              Discover teammates, manage requests, and coordinate work in one platform.
+              Search worldwide or create a profile and collaborate smoothly with live translation.
             </div>
           </div>
         </div>

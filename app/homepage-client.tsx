@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { Space_Grotesk } from "next/font/google";
-import { ArrowRight, Globe, Globe2, ShieldCheck, Sparkles, Workflow } from "lucide-react";
+import { ArrowRight, Globe, Rocket, Search, Sparkles, UserPlus } from "lucide-react";
 import { useLanguage } from "@/components/providers";
 import { normalizeLanguage } from "@/lib/i18n";
 import { APP_LANGUAGES, AppLanguage } from "@/lib/i18n/messages";
@@ -52,49 +52,49 @@ type HomeCopy = {
 
 const HOME_COPY: Record<AppLanguage, HomeCopy> = {
   en: {
-    badge: "Built for bold teams and collaborators",
-    navOpenApp: "Open the app",
+    badge: "Global partners, live translation, real execution",
+    navOpenApp: "Find a partner",
     navLogIn: "Log in",
-    navCreateAccount: "Create account",
-    title1: "Find the right people,",
-    title2: "start your next project,",
-    title3: "and build it together with momentum.",
+    navCreateAccount: "Create profile",
+    title1: "Find the right partner,",
+    title2: "start the project,",
+    title3: "and bring your idea to life.",
     description:
-      "Onbure helps people with ideas find the right collaborators, start projects together, and turn those ideas into something real.",
-    heroOpenApp: "Open the app",
-    heroCreateAccount: "Create account",
-    miniDiscoveryTitle: "Discovery",
-    miniDiscoveryBody: "Browse people and teams before you commit to working together.",
-    miniWorkspaceTitle: "Workspace",
-    miniWorkspaceBody: "Keep links, files, notes, and tasks together in one shared flow.",
-    miniRequestsTitle: "Requests",
-    miniRequestsBody: "Track invites, join requests, and chat openings without losing context.",
-    workflowKicker: "Live workflow",
-    workflowTitle: "Onbure workspace",
-    workflowPill: "Explore ready",
-    boardTitle: "Shared project board",
+      "Find collaborators across countries, or create a profile and let the right partner discover you. Onbure helps you move from idea to execution with live translation and shared context from day one.",
+    heroOpenApp: "Find a partner",
+    heroCreateAccount: "Create your profile",
+    miniDiscoveryTitle: "Global profiles",
+    miniDiscoveryBody: "Browse people and teams across countries by skills, interests, and readiness before you reach out.",
+    miniWorkspaceTitle: "Post your profile",
+    miniWorkspaceBody: "Register your profile, share what you want to build, and stay visible to the right partner anywhere.",
+    miniRequestsTitle: "Translate and build",
+    miniRequestsBody: "Move from first introduction to real execution with live translation and less friction.",
+    workflowKicker: "Global partner flow",
+    workflowTitle: "Find partners worldwide or be discovered",
+    workflowPill: "Explore globally",
+    boardTitle: "Share your idea",
     boardBody:
-      "Keep links, notes, and files connected to the same team context instead of scattering them across tools and chat threads.",
-    inboxTitle: "Request inbox",
-    inboxBody: "Accept invites, track pending conversations, and keep decisions visible.",
-    discoveryPanelTitle: "Team discovery",
-    discoveryPanelBody: "Review profiles, skills, and availability before starting a new collaboration.",
-    fitTitle: "Best fit",
+      "Share what you want to build, what kind of partner you need, and which timezone or working style fits best.",
+    inboxTitle: "Meet strong matches",
+    inboxBody: "Review promising partners from different countries and start clearer conversations from day one.",
+    discoveryPanelTitle: "Profile live worldwide",
+    discoveryPanelBody: "Create your profile once and stay visible while the right partner looks for someone like you, even across languages.",
+    fitTitle: "Live translation",
     fitBody:
-      "Onbure works best for startup teams, project collaborators, and operators who need one lightweight place to coordinate people and work.",
-    sectionKicker: "Why teams use Onbure",
-    sectionTitle: "A clearer collaboration layer for early-stage teams",
+      "Some people want to search first. Others want to post a profile and wait. Onbure supports both paths with live translation built in.",
+    sectionKicker: "Why Onbure",
+    sectionTitle: "Build with the right partner, even across borders",
     sectionDescription:
-      "From the first match to the first launch, Onbure helps teams gather fast, start projects confidently, and keep the energy moving.",
-    feature1Title: "Discover the right collaborators",
+      "Onbure is built for people who have an idea, but not yet the right person to build it with. Search globally, stay visible, and use live translation to keep execution moving.",
+    feature1Title: "Search for global partners",
     feature1Body:
-      "Browse public teams and people profiles, review skills, and find a better match before you start working together.",
-    feature2Title: "Run work from one shared workspace",
+      "Explore public profiles and teams across countries, compare skills and working styles, and reach out when the fit feels real.",
+    feature2Title: "Create a profile and get discovered",
     feature2Body:
-      "Collect links, files, notes, and task context in one place so each team can move faster without scattered tools.",
-    feature3Title: "Keep requests and approvals visible",
+      "Tell people what you want to build and what kind of partner you need so the right person can find you from anywhere.",
+    feature3Title: "Execute without language friction",
     feature3Body:
-      "Handle invites, chat requests, and join flows with a dedicated request layer instead of losing context in direct messages.",
+      "Keep requests, context, and collaboration in one place with live translation so the idea keeps moving after the introduction.",
     languageAria: "Select language",
   },
   ko: {
@@ -144,169 +144,211 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     languageAria: "언어 선택",
   },
   ja: {
-    badge: "情熱あるチームと仲間のためのスタート地点",
-    navOpenApp: "アプリを見る",
+    badge: "グローバルパートナー、リアルタイム翻訳、アイデアの実行",
+    navOpenApp: "パートナーを探す",
     navLogIn: "ログイン",
-    navCreateAccount: "アカウント作成",
-    title1: "一緒に走る仲間を見つけ、",
-    title2: "あなたのプロジェクトを動かし、",
-    title3: "最後までチームで進めましょう。",
+    navCreateAccount: "プロフィール作成",
+    title1: "最適なパートナーを見つけ、",
+    title2: "プロジェクトを始め、",
+    title3: "アイデアを現実にしましょう。",
     description:
-      "Onbure は、同じ熱量を持つ仲間と出会い、チームを探し、アイデアを本当のプロジェクトに変えるためのコラボレーションプラットフォームです。リクエスト、ワークスペース、共有の流れを一つにまとめます。",
-    heroOpenApp: "アプリを見る",
-    heroCreateAccount: "アカウント作成",
-    miniDiscoveryTitle: "探索",
-    miniDiscoveryBody: "一緒に働く前に、人とチームを先に確認できます。",
-    miniWorkspaceTitle: "ワークスペース",
-    miniWorkspaceBody: "リンク、ファイル、ノート、タスクを一つの流れにまとめます。",
-    miniRequestsTitle: "リクエスト",
-    miniRequestsBody: "招待、参加申請、チャット開始を文脈のまま管理します。",
-    workflowKicker: "ライブワークフロー",
-    workflowTitle: "Onbure ワークスペース",
-    workflowPill: "すぐに閲覧",
-    boardTitle: "共有プロジェクトボード",
+      "今すぐパートナーを探すか、プロフィールを登録してチームを作りましょう。Onbure はリアルタイム翻訳でグローバルパートナーとの会話を途切れなくつなぎ、アイデアが実行まで進むよう支えます。",
+    heroOpenApp: "パートナーを探す",
+    heroCreateAccount: "プロフィール作成",
+    miniDiscoveryTitle: "グローバルプロフィール",
+    miniDiscoveryBody: "国をまたいで、スキル、関心、準備状況から一緒に進める人やチームを探せます。",
+    miniWorkspaceTitle: "プロフィール掲載",
+    miniWorkspaceBody: "何を作りたいかを共有し、世界中の相性の良いパートナーに見つけてもらいましょう。",
+    miniRequestsTitle: "翻訳しながら実行",
+    miniRequestsBody: "最初の会話から協業まで、リアルタイム翻訳と共有コンテキストで流れを止めません。",
+    workflowKicker: "グローバルパートナーの流れ",
+    workflowTitle: "世界中のパートナーを探す、または見つけてもらう",
+    workflowPill: "グローバル探索",
+    boardTitle: "アイデアを共有",
     boardBody:
-      "リンク、ノート、ファイルを同じチーム文脈に保ち、複数ツールやチャットに散らばらないようにします。",
-    inboxTitle: "リクエスト受信箱",
-    inboxBody: "招待を承認し、進行中の会話を追い、意思決定を見える形で保ちます。",
-    discoveryPanelTitle: "チーム探索",
-    discoveryPanelBody: "コラボを始める前に、プロフィール、スキル、稼働時間を確認できます。",
-    fitTitle: "最適な使い方",
+      "何を作りたいか、どんなパートナーが必要か、どの国や時間帯が合うかをまとめて伝えましょう。",
+    inboxTitle: "合うパートナーを探す",
+    inboxBody: "複数の国の有力な候補を比べ、リアルタイム翻訳でそのまま会話を始められます。",
+    discoveryPanelTitle: "プロフィールを世界に公開",
+    discoveryPanelBody: "プロフィールを一度登録すれば、言語の違うパートナーにもアイデアが届きます。",
+    fitTitle: "なぜ使いやすいのか",
     fitBody:
-      "Onbure は、スタートアップチーム、プロジェクト型の協力者、運営担当者が人と仕事を軽く整理したいときに最適です。",
-    sectionKicker: "Onbure が選ばれる理由",
-    sectionTitle: "初期チームのための、より明確なコラボレーションレイヤー",
+      "自分で探したい人も、プロフィールを載せて待ちたい人もいます。Onbure はリアルタイム翻訳でその両方を支えます。",
+    sectionKicker: "なぜ Onbure なのか",
+    sectionTitle: "国境を越えて、合うパートナーとアイデアを実行する方法",
     sectionDescription:
-      "最初の出会いから最初の実行まで、Onbure はチームが素早く集まり、そのままプロジェクトを始められるようにします。",
-    feature1Title: "適したコラボレーターを見つけやすい",
+      "Onbure はアイデアはあるが一緒に作るパートナーがまだいない人のための場所です。世界中から相手を探し、プロフィールを公開し、リアルタイム翻訳で止まらず実行できます。",
+    feature1Title: "世界中のパートナーを探す",
     feature1Body:
-      "公開チームや人物プロフィールを見て、スキルを確認し、共同作業を始める前に相性の良い組み合わせを探せます。",
-    feature2Title: "一つの共有ワークスペースで進める",
+      "公開プロフィールやチームを見て、国・スキル・方向性を比較し、相性の良い相手に連絡できます。",
+    feature2Title: "プロフィールを公開してグローバルマッチを待つ",
     feature2Body:
-      "リンク、ファイル、ノート、タスク文脈を一か所に集め、チームが複数ツールで分断されないようにします。",
-    feature3Title: "リクエストと承認を見えるまま保つ",
+      "作りたいものと必要な役割を書いておけば、別の国の相手から見つけてもらえます。",
+    feature3Title: "リアルタイム翻訳で止まらず実行",
     feature3Body:
-      "招待、チャット申請、参加フローを専用レイヤーで扱い、DM に埋もれないようにします。",
+      "会話、リクエスト、協業の流れをリアルタイム翻訳と一緒につなぎ、言語の壁なしで進められます。",
     languageAria: "言語を選択",
   },
   fr: {
-    badge: "Le point de départ pour des équipes et collaborateurs ambitieux",
-    navOpenApp: "Ouvrir l'app",
+    badge: "Partenaires mondiaux, traduction en temps réel, exécution des idées",
+    navOpenApp: "Trouver un partenaire",
     navLogIn: "Connexion",
-    navCreateAccount: "Créer un compte",
-    title1: "Trouvez les bonnes personnes,",
-    title2: "lancez votre prochain projet,",
-    title3: "et faites-le avancer ensemble.",
+    navCreateAccount: "Créer un profil",
+    title1: "Trouvez le bon partenaire,",
+    title2: "lancez le projet,",
+    title3: "et donnez vie à votre idée.",
     description:
-      "Onbure réunit des collaborateurs qui partagent la même énergie, aide à explorer les équipes et transforme une idée en vrai projet grâce aux demandes, aux workspaces et à un flux partagé au même endroit.",
-    heroOpenApp: "Ouvrir l'app",
-    heroCreateAccount: "Créer un compte",
-    miniDiscoveryTitle: "Découverte",
-    miniDiscoveryBody: "Parcourez les personnes et les équipes avant de commencer à travailler ensemble.",
-    miniWorkspaceTitle: "Espace de travail",
-    miniWorkspaceBody: "Gardez liens, fichiers, notes et tâches dans un même flux partagé.",
-    miniRequestsTitle: "Demandes",
-    miniRequestsBody: "Suivez invitations, demandes d'accès et ouvertures de chat sans perdre le contexte.",
-    workflowKicker: "Flux en direct",
-    workflowTitle: "Workspace Onbure",
-    workflowPill: "Prêt à explorer",
-    boardTitle: "Tableau de projet partagé",
+      "Trouvez directement un partenaire ou créez un profil pour former votre équipe. Onbure permet de parler sans friction avec des partenaires du monde entier grâce à la traduction en temps réel et vous aide à mener l'idée jusqu'à l'exécution.",
+    heroOpenApp: "Trouver un partenaire",
+    heroCreateAccount: "Créer un profil",
+    miniDiscoveryTitle: "Profils globaux",
+    miniDiscoveryBody: "Parcourez des personnes et des équipes de différents pays selon les compétences, les centres d'intérêt et la disponibilité.",
+    miniWorkspaceTitle: "Publier un profil",
+    miniWorkspaceBody: "Expliquez ce que vous voulez construire et laissez le bon partenaire vous découvrir, où qu'il soit.",
+    miniRequestsTitle: "Traduire et avancer",
+    miniRequestsBody: "Passez du premier échange à l'exécution avec la traduction en temps réel et un contexte partagé.",
+    workflowKicker: "Flux partenaire global",
+    workflowTitle: "Trouvez des partenaires dans le monde ou soyez découvert",
+    workflowPill: "Explorer le monde",
+    boardTitle: "Partager votre idée",
     boardBody:
-      "Reliez liens, notes et fichiers au même contexte d'équipe au lieu de les disperser entre plusieurs outils et discussions.",
-    inboxTitle: "Boîte de demandes",
-    inboxBody: "Acceptez les invitations, suivez les conversations en attente et gardez les décisions visibles.",
-    discoveryPanelTitle: "Découverte d'équipe",
-    discoveryPanelBody: "Consultez profils, compétences et disponibilités avant de lancer une collaboration.",
-    fitTitle: "Meilleur usage",
+      "Décrivez ce que vous voulez construire, le type de partenaire recherché et le fuseau horaire qui vous convient.",
+    inboxTitle: "Trouver les bons profils",
+    inboxBody: "Comparez des partenaires prometteurs dans plusieurs pays et démarrez des conversations plus claires dès le premier jour.",
+    discoveryPanelTitle: "Profil visible partout",
+    discoveryPanelBody: "Créez votre profil une fois et restez visible même auprès de partenaires qui parlent une autre langue.",
+    fitTitle: "Traduction en direct",
     fitBody:
-      "Onbure convient surtout aux équipes startup, aux collaborateurs projet et aux opérations qui veulent coordonner personnes et travail dans un espace léger.",
-    sectionKicker: "Pourquoi les équipes utilisent Onbure",
-    sectionTitle: "Une couche de collaboration plus claire pour les équipes en phase de lancement",
+      "Certaines personnes préfèrent chercher d'abord. D'autres préfèrent publier leur profil et attendre. Onbure prend en charge les deux avec la traduction en temps réel.",
+    sectionKicker: "Pourquoi Onbure",
+    sectionTitle: "Construire avec le bon partenaire, même au-delà des frontières",
     sectionDescription:
-      "De la première rencontre au premier lancement, Onbure aide les équipes à se rassembler vite et à démarrer un projet sans perdre l'élan.",
-    feature1Title: "Trouver plus facilement les bons collaborateurs",
+      "Onbure est pensé pour celles et ceux qui ont une idée, mais pas encore le bon partenaire pour la construire. Cherchez à l'international, rendez votre profil visible et avancez sans blocage grâce à la traduction en temps réel.",
+    feature1Title: "Chercher des partenaires à l'international",
     feature1Body:
-      "Parcourez des équipes publiques et des profils, comparez les compétences et identifiez un meilleur fit avant de collaborer.",
-    feature2Title: "Travailler depuis un espace partagé unique",
+      "Explorez des profils et des équipes publiques dans différents pays, comparez les compétences et les façons de travailler, puis contactez la bonne personne.",
+    feature2Title: "Créer un profil et vous faire découvrir",
     feature2Body:
-      "Rassemblez liens, fichiers, notes et contexte de travail au même endroit pour éviter la dispersion entre outils.",
-    feature3Title: "Garder visibles demandes et validations",
+      "Expliquez ce que vous voulez construire et le type de partenaire recherché pour que la bonne personne vous trouve, où qu'elle soit.",
+    feature3Title: "Exécuter sans blocage de langue",
     feature3Body:
-      "Gérez invitations, chats et flux de participation dans une couche dédiée plutôt que dans des messages privés dispersés.",
+      "Gardez demandes, contexte et collaboration au même endroit avec la traduction en temps réel pour que l'idée continue d'avancer.",
     languageAria: "Choisir la langue",
   },
   es: {
-    badge: "El punto de partida para equipos y colaboradores con impulso",
-    navOpenApp: "Abrir la app",
+    badge: "Socios globales, traducción en tiempo real, ideas en ejecución",
+    navOpenApp: "Buscar socio",
     navLogIn: "Iniciar sesión",
-    navCreateAccount: "Crear cuenta",
-    title1: "Encuentra a las personas correctas,",
-    title2: "pon en marcha tu proyecto,",
-    title3: "y hazlo avanzar en equipo.",
+    navCreateAccount: "Crear perfil",
+    title1: "Encuentra al socio adecuado,",
+    title2: "empieza el proyecto,",
+    title3: "y haz realidad tu idea.",
     description:
-      "Onbure conecta a colaboradores con la misma energía, te deja explorar equipos y convertir una idea en un proyecto real con solicitudes, workspaces y un flujo compartido en un solo lugar.",
-    heroOpenApp: "Abrir la app",
-    heroCreateAccount: "Crear cuenta",
-    miniDiscoveryTitle: "Discovery",
-    miniDiscoveryBody: "Explora personas y equipos antes de empezar a trabajar juntos.",
-    miniWorkspaceTitle: "Workspace",
-    miniWorkspaceBody: "Mantén enlaces, archivos, notas y tareas en un solo flujo compartido.",
-    miniRequestsTitle: "Solicitudes",
-    miniRequestsBody: "Sigue invitaciones, solicitudes de ingreso y aperturas de chat sin perder contexto.",
-    workflowKicker: "Flujo en vivo",
-    workflowTitle: "Workspace Onbure",
-    workflowPill: "Listo para explorar",
-    boardTitle: "Tablero de proyecto compartido",
+      "Busca un socio directamente o crea un perfil para formar tu equipo. Onbure mantiene conversaciones fluidas con socios globales gracias a la traducción en tiempo real y te ayuda a llevar tu idea hasta la ejecución.",
+    heroOpenApp: "Buscar socio",
+    heroCreateAccount: "Crear perfil",
+    miniDiscoveryTitle: "Perfiles globales",
+    miniDiscoveryBody: "Explora personas y equipos de distintos países según habilidades, intereses y disponibilidad antes de escribirles.",
+    miniWorkspaceTitle: "Publica tu perfil",
+    miniWorkspaceBody: "Comparte lo que quieres construir y deja que el socio adecuado te descubra desde cualquier lugar.",
+    miniRequestsTitle: "Traduce y ejecuta",
+    miniRequestsBody: "Pasa de la primera conversación a la ejecución con traducción en tiempo real y contexto compartido.",
+    workflowKicker: "Flujo global de socios",
+    workflowTitle: "Encuentra socios en todo el mundo o deja que te descubran",
+    workflowPill: "Explorar globalmente",
+    boardTitle: "Comparte tu idea",
     boardBody:
-      "Mantén enlaces, notas y archivos conectados al mismo contexto de equipo en lugar de repartirlos entre herramientas y chats.",
-    inboxTitle: "Bandeja de solicitudes",
-    inboxBody: "Acepta invitaciones, sigue conversaciones pendientes y mantén visibles las decisiones.",
-    discoveryPanelTitle: "Descubrimiento de equipos",
-    discoveryPanelBody: "Revisa perfiles, habilidades y disponibilidad antes de iniciar una colaboración.",
-    fitTitle: "Mejor encaje",
+      "Cuenta qué quieres construir, qué tipo de socio necesitas y qué país o zona horaria encaja mejor.",
+    inboxTitle: "Encuentra socios adecuados",
+    inboxBody: "Compara perfiles prometedores de distintos países y empieza conversaciones más claras desde el primer día.",
+    discoveryPanelTitle: "Perfil visible en todo el mundo",
+    discoveryPanelBody: "Crea tu perfil una vez y mantente visible incluso para socios que hablan otro idioma.",
+    fitTitle: "Traducción en vivo",
     fitBody:
-      "Onbure funciona mejor para equipos startup, colaboradores por proyecto y operadores que necesitan coordinar personas y trabajo en un espacio ligero.",
-    sectionKicker: "Por qué los equipos usan Onbure",
-    sectionTitle: "Una capa de colaboración más clara para equipos en etapa inicial",
+      "Algunas personas quieren buscar primero. Otras prefieren publicar su perfil y esperar. Onbure permite ambos caminos con traducción en tiempo real.",
+    sectionKicker: "Por qué Onbure",
+    sectionTitle: "Construye con el socio adecuado, incluso entre países",
     sectionDescription:
-      "Desde el primer match hasta la primera ejecución, Onbure ayuda a los equipos a reunirse rápido y empezar proyectos sin perder impulso.",
-    feature1Title: "Descubre a los colaboradores adecuados",
+      "Onbure está pensado para personas que tienen una idea, pero aún no al socio adecuado para construirla. Busca globalmente, mantén tu perfil visible y avanza con traducción en tiempo real.",
+    feature1Title: "Busca socios globales",
     feature1Body:
-      "Explora equipos públicos y perfiles personales, revisa habilidades y encuentra un mejor encaje antes de empezar a colaborar.",
-    feature2Title: "Trabaja desde un espacio compartido",
+      "Explora perfiles y equipos públicos de distintos países, compara habilidades y estilos de trabajo, y contacta a la persona adecuada.",
+    feature2Title: "Crea un perfil y deja que te encuentren",
     feature2Body:
-      "Reúne enlaces, archivos, notas y contexto de tareas en un solo lugar para que el equipo no se disperse entre herramientas.",
-    feature3Title: "Mantén visibles solicitudes y aprobaciones",
+      "Explica qué quieres construir y qué socio necesitas para que la persona correcta te encuentre desde cualquier lugar.",
+    feature3Title: "Ejecuta sin fricción de idioma",
     feature3Body:
-      "Gestiona invitaciones, chats y flujos de ingreso en una capa dedicada en lugar de perderlos en mensajes directos.",
+      "Mantén solicitudes, contexto y colaboración en un solo lugar con traducción en tiempo real para que la idea siga avanzando.",
     languageAria: "Seleccionar idioma",
   },
+};
+
+const HOME_COPY_KO_OVERRIDE: HomeCopy = {
+  badge: "글로벌 파트너, 실시간 번역, 아이디어 실행",
+  navOpenApp: "파트너 찾기",
+  navLogIn: "로그인",
+  navCreateAccount: "프로필 만들기",
+  title1: "함께할 사람을 찾아서,",
+  title2: "프로젝트를 만들고,",
+  title3: "여러분의 아이디어를 실현시켜 보세요!",
+  description:
+    "지금 직접 파트너를 찾거나 프로필을 등록해 팀을 만들어 보세요. Onbure는 실시간 번역으로 글로벌 파트너와 대화를 막힘없이 이어 주고, 아이디어가 실행까지 이어지도록 돕습니다.",
+  heroOpenApp: "파트너 찾기",
+  heroCreateAccount: "프로필 만들기",
+  miniDiscoveryTitle: "글로벌 프로필 탐색",
+  miniDiscoveryBody: "나라가 달라도 스킬, 관심사, 준비 상태를 보고 함께할 사람이나 팀을 찾을 수 있습니다.",
+  miniWorkspaceTitle: "프로필 등록",
+  miniWorkspaceBody: "무엇을 만들고 싶은지 올려두고, 전 세계의 맞는 파트너가 당신을 발견하도록 기다려보세요.",
+  miniRequestsTitle: "번역하며 실행",
+  miniRequestsBody: "첫 대화부터 협업까지 실시간 번역과 공유된 맥락으로 아이디어를 끊기지 않게 이어갑니다.",
+  workflowKicker: "글로벌 파트너 흐름",
+  workflowTitle: "전 세계 파트너를 찾거나, 발견되거나",
+  workflowPill: "글로벌 탐색",
+  boardTitle: "아이디어 공유",
+  boardBody: "무엇을 만들고 싶은지, 어떤 파트너가 필요한지, 어느 나라나 시간대와 잘 맞는지 함께 적어보세요.",
+  inboxTitle: "맞는 파트너 찾기",
+  inboxBody: "다른 나라의 유망한 파트너를 비교하고, 실시간 번역으로 바로 대화를 시작할 수 있습니다.",
+  discoveryPanelTitle: "전 세계에 프로필 공개",
+  discoveryPanelBody: "프로필을 한 번 등록해두면, 다른 언어를 쓰는 파트너에게도 당신의 아이디어가 닿을 수 있습니다.",
+  fitTitle: "왜 잘 맞을까",
+  fitBody: "직접 찾든, 프로필을 올려두고 기다리든 괜찮습니다. Onbure는 실시간 번역으로 글로벌 협업의 장벽을 낮춥니다.",
+  sectionKicker: "왜 Onbure인가",
+  sectionTitle: "국경을 넘어 맞는 파트너와 아이디어를 실행하는 방법",
+  sectionDescription:
+    "Onbure는 아이디어는 있지만 함께 만들 파트너가 없는 사람들을 위한 공간입니다. 전 세계에서 파트너를 찾고, 프로필을 공개하고, 실시간 번역으로 막힘 없이 실행해보세요.",
+  feature1Title: "전 세계 파트너 탐색",
+  feature1Body: "공개 프로필과 팀을 둘러보며 나라, 스킬, 방향을 비교하고 잘 맞는 사람에게 연락할 수 있습니다.",
+  feature2Title: "프로필을 올리고 글로벌 매칭 기다리기",
+  feature2Body: "무엇을 만들고 싶은지와 필요한 역할을 적어두면, 다른 나라의 맞는 파트너도 먼저 당신을 찾을 수 있습니다.",
+  feature3Title: "실시간 번역으로 막힘 없이 실행",
+  feature3Body: "대화와 요청, 협업 흐름을 실시간 번역과 함께 이어가며 언어 장벽 없이 프로젝트를 움직일 수 있습니다.",
+  languageAria: "언어 선택",
 };
 
 const featureKeys = [
   {
     titleKey: "feature1Title",
     bodyKey: "feature1Body",
-    icon: Globe2,
+    icon: Search,
     accent: "from-amber-500/25 to-orange-500/10",
   },
   {
     titleKey: "feature2Title",
     bodyKey: "feature2Body",
-    icon: Workflow,
+    icon: UserPlus,
     accent: "from-teal-500/20 to-cyan-500/10",
   },
   {
     titleKey: "feature3Title",
     bodyKey: "feature3Body",
-    icon: ShieldCheck,
+    icon: Rocket,
     accent: "from-slate-900/12 to-slate-500/5",
   },
 ] as const;
 
 export default function HomePageClient() {
   const { language, setLanguage, t } = useLanguage();
-  const copy = HOME_COPY[language] || HOME_COPY.en;
+  const copy = language === "ko" ? HOME_COPY_KO_OVERRIDE : HOME_COPY[language] || HOME_COPY.en;
 
   const languageLabels: Record<AppLanguage, string> = {
     ko: t("language.korean"),
@@ -322,7 +364,7 @@ export default function HomePageClient() {
       <div className="absolute left-[6%] top-28 h-32 w-32 rounded-full bg-amber-300/25 blur-3xl" />
       <div className="absolute right-[10%] top-44 h-44 w-44 rounded-full bg-teal-400/15 blur-3xl" />
 
-      <section className="relative mx-auto max-w-6xl px-5 pb-20 pt-6 sm:px-8 lg:px-10">
+      <section className="relative mx-auto max-w-7xl px-5 pb-20 pt-6 sm:px-8 lg:px-12">
         <header className="mb-14 flex flex-wrap items-center justify-between gap-4 rounded-full border border-slate-200/80 bg-white/75 px-4 py-3 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.4)] backdrop-blur sm:px-5">
           <Link href="/discovery" className="flex items-center gap-3 transition hover:opacity-85">
             <Image
@@ -330,7 +372,7 @@ export default function HomePageClient() {
               alt="Onbure"
               width={40}
               height={40}
-              className="h-10 w-10 rounded-xl border border-slate-200/80 bg-white object-cover shadow-sm"
+              className="h-10 w-10 rounded-xl border border-slate-200/80 bg-white p-1 object-contain shadow-sm"
             />
             <p className={`text-lg font-semibold tracking-tight text-slate-950 ${spaceGrotesk.className}`}>
               Onbure
@@ -374,113 +416,57 @@ export default function HomePageClient() {
           </div>
         </header>
 
-        <div className="grid gap-12 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] lg:items-center">
-          <div className="max-w-3xl">
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/70 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-amber-900 shadow-sm">
-              <Sparkles className="h-3.5 w-3.5" />
-              {copy.badge}
-            </div>
-            <h1
-              className={`max-w-4xl text-5xl font-semibold leading-[0.94] tracking-[-0.05em] text-slate-950 sm:text-6xl lg:text-7xl ${spaceGrotesk.className}`}
+        <div className="max-w-5xl">
+          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/70 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-amber-900 shadow-sm">
+            <Sparkles className="h-3.5 w-3.5" />
+            {copy.badge}
+          </div>
+          <h1
+            className={`max-w-5xl text-5xl font-semibold leading-[0.94] tracking-[-0.05em] text-slate-950 sm:text-6xl lg:text-7xl ${spaceGrotesk.className}`}
+          >
+            {copy.title1}
+            <span className="block text-amber-700">{copy.title2}</span>
+            <span className="block">{copy.title3}</span>
+          </h1>
+          <p className="mt-6 max-w-4xl text-lg leading-8 text-slate-700 sm:text-xl">
+            {copy.description}
+          </p>
+
+          <div className="mt-8 flex flex-wrap items-center gap-4">
+            <Link
+              href="/discovery"
+              className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-6 py-3 text-sm font-medium text-white transition hover:-translate-y-0.5 hover:bg-slate-800"
             >
-              {copy.title1}
-              <span className="block text-amber-700">{copy.title2}</span>
-              <span className="block">{copy.title3}</span>
-            </h1>
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-700 sm:text-xl">
-              {copy.description}
-            </p>
-
-            <div className="mt-8 flex flex-wrap items-center gap-4">
-              <Link
-                href="/discovery"
-                className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-6 py-3 text-sm font-medium text-white transition hover:-translate-y-0.5 hover:bg-slate-800"
-              >
-                {copy.heroOpenApp}
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-              <Link
-                href="/register"
-                className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white/80 px-6 py-3 text-sm font-medium text-slate-900 transition hover:border-slate-400 hover:bg-white"
-              >
-                {copy.heroCreateAccount}
-              </Link>
-            </div>
-
-            <div className="mt-10 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-3xl border border-white/80 bg-white/70 p-4 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.55)] backdrop-blur">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{copy.miniDiscoveryTitle}</p>
-                <p className="mt-2 text-sm leading-6 text-slate-700">{copy.miniDiscoveryBody}</p>
-              </div>
-              <div className="rounded-3xl border border-white/80 bg-white/70 p-4 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.55)] backdrop-blur">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{copy.miniWorkspaceTitle}</p>
-                <p className="mt-2 text-sm leading-6 text-slate-700">{copy.miniWorkspaceBody}</p>
-              </div>
-              <div className="rounded-3xl border border-white/80 bg-white/70 p-4 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.55)] backdrop-blur">
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{copy.miniRequestsTitle}</p>
-                <p className="mt-2 text-sm leading-6 text-slate-700">{copy.miniRequestsBody}</p>
-              </div>
-            </div>
+              {copy.heroOpenApp}
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <Link
+              href="/register"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white/80 px-6 py-3 text-sm font-medium text-slate-900 transition hover:border-slate-400 hover:bg-white"
+            >
+              {copy.heroCreateAccount}
+            </Link>
           </div>
 
-          <div className="relative">
-            <div className="absolute inset-0 rounded-[2rem] bg-[linear-gradient(140deg,rgba(15,23,42,0.14),rgba(245,158,11,0.08),rgba(13,148,136,0.12))] blur-2xl" />
-            <div className="relative overflow-hidden rounded-[2rem] border border-slate-200/80 bg-slate-950 p-6 text-white shadow-[0_40px_110px_-50px_rgba(15,23,42,0.8)]">
-              <div className="mb-6 overflow-hidden rounded-[1.5rem] border border-white/10 bg-white/5 shadow-[0_20px_50px_-30px_rgba(8,18,37,0.85)]">
-                <Image
-                  src="/search-preview.svg"
-                  alt="Preview of the Onbure collaboration workspace"
-                  width="1200"
-                  height="630"
-                  priority
-                  unoptimized
-                  className="block h-auto w-full"
-                />
-              </div>
-              <div className="mb-8 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-white/45">{copy.workflowKicker}</p>
-                  <p className="mt-2 text-2xl font-semibold tracking-tight">{copy.workflowTitle}</p>
-                </div>
-                <Link
-                  href="/discovery"
-                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
-                >
-                  {copy.workflowPill}
-                </Link>
-              </div>
-
-              <div className="space-y-4">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-sm font-medium text-white/90">{copy.boardTitle}</p>
-                  <p className="mt-2 text-sm leading-6 text-white/60">{copy.boardBody}</p>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-amber-400/20 bg-amber-300/10 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-amber-100/75">
-                      {copy.inboxTitle}
-                    </p>
-                    <p className="mt-3 text-sm leading-6 text-amber-50/90">{copy.inboxBody}</p>
-                  </div>
-                  <div className="rounded-2xl border border-teal-300/20 bg-teal-300/10 p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] text-teal-100/75">
-                      {copy.discoveryPanelTitle}
-                    </p>
-                    <p className="mt-3 text-sm leading-6 text-teal-50/90">{copy.discoveryPanelBody}</p>
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-white/45">{copy.fitTitle}</p>
-                  <p className="mt-3 text-sm leading-6 text-white/65">{copy.fitBody}</p>
-                </div>
-              </div>
+          <div className="mt-10 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-3xl border border-white/80 bg-white/70 p-4 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.55)] backdrop-blur">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{copy.miniDiscoveryTitle}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-700">{copy.miniDiscoveryBody}</p>
+            </div>
+            <div className="rounded-3xl border border-white/80 bg-white/70 p-4 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.55)] backdrop-blur">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{copy.miniWorkspaceTitle}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-700">{copy.miniWorkspaceBody}</p>
+            </div>
+            <div className="rounded-3xl border border-white/80 bg-white/70 p-4 shadow-[0_20px_45px_-35px_rgba(15,23,42,0.55)] backdrop-blur">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{copy.miniRequestsTitle}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-700">{copy.miniRequestsBody}</p>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-5 pb-24 sm:px-8 lg:px-10">
-        <div className="mb-8 max-w-3xl">
+      <section className="mx-auto max-w-7xl px-5 pb-24 sm:px-8 lg:px-12">
+        <div className="mb-8 max-w-4xl">
           <p className="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">
             {copy.sectionKicker}
           </p>

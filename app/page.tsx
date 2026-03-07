@@ -3,16 +3,16 @@ import HomePageClient from "@/app/homepage-client";
 import { absoluteUrl, buildPageMetadata, SITE_NAME } from "@/lib/seo";
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Find Collaborators And Turn Ideas Into Real Projects",
+  title: "Find the Right Partner and Bring Your Idea to Life",
   description:
-    "Onbure helps people with ideas find the right collaborators, start projects together, and turn ideas into reality.",
+    "Onbure helps people with ideas find global partners, get discovered through profiles, and move from idea to execution with live translation.",
   pathname: "/",
   keywords: [
-    "Onbure startup teams",
-    "collaboration workspace",
-    "team discovery platform",
-    "shared project workspace",
-    "request management",
+    "global startup partners",
+    "live translation collaboration",
+    "partner discovery platform",
+    "cross-border project workspace",
+    "idea execution platform",
   ],
 });
 
@@ -30,7 +30,7 @@ const brandSchema = {
       name: SITE_NAME,
       url: absoluteUrl("/"),
       description:
-        "A platform where people with ideas can find collaborators, start projects together, and bring ideas to life.",
+        "A platform where people with ideas can find global collaborators, post a profile, and execute ideas together with live translation.",
     },
     {
       "@type": "SoftwareApplication",
@@ -39,7 +39,7 @@ const brandSchema = {
       operatingSystem: "Web",
       url: absoluteUrl("/"),
       description:
-        "Onbure is a web platform for finding collaborators, building projects together, and turning ideas into something real.",
+        "Onbure is a web platform for finding global partners, getting discovered through profiles, and moving ideas into real projects with live translation.",
     },
   ],
 };
