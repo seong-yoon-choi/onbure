@@ -389,7 +389,7 @@ export default function PeopleProfilePage() {
     if (error || !profile) {
         return (
             <div className="space-y-4">
-                <Link href="/" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
+                <Link href="/discovery" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
                     <ArrowLeft className="w-4 h-4" />
                     {t("people.backToDiscovery")}
                 </Link>
@@ -401,7 +401,7 @@ export default function PeopleProfilePage() {
     return (
         <>
             <div className="max-w-3xl mx-auto space-y-6">
-                <Link href="/" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
+                <Link href="/discovery" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
                     <ArrowLeft className="w-4 h-4" />
                     {t("people.backToDiscovery")}
                 </Link>

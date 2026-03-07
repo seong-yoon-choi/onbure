@@ -17,7 +17,7 @@ import { useLanguage } from "@/components/providers";
 import QnaFeedbackWidget from "@/components/qna-feedback/QnaFeedbackWidget";
 
 const leftNavItems = [
-    { href: "/", labelKey: "nav.discovery", icon: Compass, actionKey: "nav.discovery" },
+    { href: "/discovery", labelKey: "nav.discovery", icon: Compass, actionKey: "nav.discovery" },
     { href: "/friends", labelKey: "nav.friends", icon: Users, actionKey: "nav.friends" },
 ];
 
@@ -416,9 +416,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
-        const trimmedSearchTerm = searchTerm.trim();
-        trackNavAction("nav.search", { keywordLength: trimmedSearchTerm.length });
-        router.push(trimmedSearchTerm ? `/?q=${encodeURIComponent(trimmedSearchTerm)}` : "/");
+        trackNavAction("nav.search", { keywordLength: searchTerm.trim().length });
+        router.push(`/discovery?q=${encodeURIComponent(searchTerm)}`);
     };
 
     return (
@@ -427,16 +426,14 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             <header className="h-16 border-b border-[var(--border)] bg-[var(--header-bg)] backdrop-blur-md sticky top-0 z-50 grid grid-cols-[auto_1fr_auto] items-center px-6 gap-8">
                 {/* Left: Logo & Nav */}
                 <div className="flex items-center gap-8">
-                    <Link href="/" className="text-xl font-bold bg-gradient-to-r from-violet-500 to-emerald-500 bg-clip-text text-transparent shrink-0">
+                    <Link href="/discovery" className="text-xl font-bold bg-gradient-to-r from-violet-500 to-emerald-500 bg-clip-text text-transparent shrink-0">
                         Onbure
                     </Link>
 
                     <nav className="hidden md:flex items-center gap-4">
                         {leftNavItems.map((item) => {
                             const Icon = item.icon;
-                            const isActive = item.href === "/"
-                                ? pathname === "/"
-                                : pathname.startsWith(item.href);
+                            const isActive = pathname.startsWith(item.href);
                             return (
                                 <Link
                                     key={item.href}
