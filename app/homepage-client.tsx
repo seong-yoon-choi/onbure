@@ -60,7 +60,7 @@ const HOME_COPY: Record<AppLanguage, HomeCopy> = {
     title2: "start your next project,",
     title3: "and build it together with momentum.",
     description:
-      "Onbure helps you meet collaborators who share your energy, explore active teams, and turn early ideas into real projects with requests, workspaces, and shared context in one place.",
+      "Onbure helps people with ideas find the right collaborators, start projects together, and turn those ideas into something real.",
     heroOpenApp: "Open the app",
     heroCreateAccount: "Create account",
     miniDiscoveryTitle: "Discovery",

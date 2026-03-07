@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const SITE_NAME = "Onbure";
 export const SITE_DESCRIPTION =
-  "Onbure helps teams discover collaborators, organize shared workspaces, and manage requests in one place.";
+  "Onbure helps people with ideas find the right collaborators, start projects together, and turn ideas into reality.";
 export const SITE_KEYWORDS = [
   "Onbure",
   "team collaboration",
