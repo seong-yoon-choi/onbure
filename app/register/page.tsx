@@ -198,7 +198,7 @@ export default function RegisterPage() {
                 throw new Error(t("auth.register.error.loginFailed"));
             }
 
-            router.push("/discovery");
+            router.push("/");
         } catch (err: any) {
             setError(String(err?.message || t("auth.register.error.registrationFailed")));
         } finally {

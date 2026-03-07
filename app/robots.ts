@@ -5,7 +5,6 @@ const DISALLOWED_APP_PATHS = [
   "/api",
   "/admin",
   "/chat",
-  "/discovery",
   "/friends",
   "/people",
   "/profile",

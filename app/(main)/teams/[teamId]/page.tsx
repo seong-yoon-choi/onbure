@@ -559,7 +559,7 @@ export default function TeamDetailPage() {
             }
             setLeaveTeamModalOpen(false);
             setLeaveTeamPassword("");
-            router.push("/discovery");
+            router.push("/");
         } catch (e: any) {
             setLeaveTeamError(e?.message || t("team.error.leaveFailed"));
         } finally {
@@ -592,7 +592,7 @@ export default function TeamDetailPage() {
             }
             setDeleteModalOpen(false);
             setDeletePassword("");
-            router.push("/discovery");
+            router.push("/");
         } catch (e: any) {
             setDeleteError(e?.message || t("team.error.deleteFailed"));
         } finally {
@@ -607,7 +607,7 @@ export default function TeamDetailPage() {
     if (error || !team) {
         return (
             <div className="space-y-4">
-                <Link href="/discovery" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
+                <Link href="/" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
                     <ArrowLeft className="w-4 h-4" />
                     {t("team.backToDiscovery")}
                 </Link>
@@ -619,7 +619,7 @@ export default function TeamDetailPage() {
     return (
         <>
         <div className="max-w-4xl mx-auto space-y-6">
-            <Link href="/discovery" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
+            <Link href="/" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-2">
                 <ArrowLeft className="w-4 h-4" />
                 {t("team.backToDiscovery")}
             </Link>

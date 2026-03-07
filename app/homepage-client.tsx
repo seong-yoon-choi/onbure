@@ -324,7 +324,7 @@ export default function HomePageClient() {
 
       <section className="relative mx-auto max-w-6xl px-5 pb-20 pt-6 sm:px-8 lg:px-10">
         <header className="mb-14 flex flex-wrap items-center justify-between gap-4 rounded-full border border-slate-200/80 bg-white/75 px-4 py-3 shadow-[0_18px_50px_-32px_rgba(15,23,42,0.4)] backdrop-blur sm:px-5">
-          <Link href="/discovery" className="flex items-center gap-3 transition hover:opacity-85">
+          <Link href="/" className="flex items-center gap-3 transition hover:opacity-85">
             <Image
               src="/icon.png"
               alt="Onbure"
@@ -355,7 +355,7 @@ export default function HomePageClient() {
             </div>
             <Link
               className="inline-flex items-center rounded-full border border-slate-300 bg-white/80 px-4 py-2 font-medium text-slate-900 transition hover:border-slate-400 hover:bg-white"
-              href="/discovery"
+              href="/"
             >
               {copy.navOpenApp}
             </Link>
@@ -393,7 +393,7 @@ export default function HomePageClient() {
 
             <div className="mt-8 flex flex-wrap items-center gap-4">
               <Link
-                href="/discovery"
+                href="/"
                 className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-6 py-3 text-sm font-medium text-white transition hover:-translate-y-0.5 hover:bg-slate-800"
               >
                 {copy.heroOpenApp}
@@ -443,7 +443,7 @@ export default function HomePageClient() {
                   <p className="mt-2 text-2xl font-semibold tracking-tight">{copy.workflowTitle}</p>
                 </div>
                 <Link
-                  href="/discovery"
+                  href="/"
                   className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
                 >
                   {copy.workflowPill}

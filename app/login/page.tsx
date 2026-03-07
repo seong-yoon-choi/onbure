@@ -56,7 +56,7 @@ export default function LoginPage() {
                 // Non-blocking error
                 console.error("Failed to sync language on login", err);
             }
-            router.push("/discovery");
+            router.push("/");
         }
     }
 

@@ -1,18 +1,25 @@
 import type { Metadata } from "next";
-import HomePageClient from "@/app/homepage-client";
+import MainLayout from "./(main)/layout";
+import DiscoveryClientPage from "./(main)/discovery/discovery-client";
 import { absoluteUrl, buildPageMetadata, SITE_NAME } from "@/lib/seo";
 
+interface RootPageProps {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}
+
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = buildPageMetadata({
-  title: "Collaboration Workspace For Startup Teams",
+  title: "Discover Startup Teams And Collaborators",
   description:
-    "Onbure helps startup teams discover collaborators, organize shared workspaces, manage requests, and keep projects moving in one place.",
+    "Browse public teams, collaborator profiles, and active opportunities on Onbure.",
   pathname: "/",
   keywords: [
-    "Onbure startup teams",
-    "collaboration workspace",
+    "Onbure discovery",
+    "startup collaborators",
+    "public teams",
+    "collaboration opportunities",
     "team discovery platform",
-    "shared project workspace",
-    "request management",
   ],
 });
 
@@ -44,14 +51,20 @@ const brandSchema = {
   ],
 };
 
-export default function Home() {
+export default async function RootPage({ searchParams }: RootPageProps) {
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const rawQuery = resolvedSearchParams.q;
+  const initialSearchQuery = Array.isArray(rawQuery) ? (rawQuery[0] ?? "") : (rawQuery ?? "");
+
   return (
     <>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(brandSchema) }}
       />
-      <HomePageClient />
+      <MainLayout>
+        <DiscoveryClientPage initialSearchQuery={initialSearchQuery} />
+      </MainLayout>
     </>
   );
 }
