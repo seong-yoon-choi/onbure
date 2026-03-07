@@ -14,7 +14,14 @@ import {
   shouldLoadIubendaEmbedLoader,
   shouldLoadIubendaScripts,
 } from "@/lib/iubenda";
-import { SITE_DESCRIPTION, SITE_KEYWORDS, SITE_NAME, getSiteUrl } from "@/lib/seo";
+import {
+  DEFAULT_SOCIAL_IMAGE_PATH,
+  SITE_DESCRIPTION,
+  SITE_KEYWORDS,
+  SITE_NAME,
+  absoluteUrl,
+  getSiteUrl,
+} from "@/lib/seo";
 
 const inter = Inter({ subsets: ["latin"] });
 const DEFAULT_IUBENDA_PRIVACY_URL = "https://www.iubenda.com/privacy-policy/31787811";
@@ -26,6 +33,7 @@ const shouldInjectIubendaEmbedLoader = shouldLoadIubendaEmbedLoader();
 const iubendaWidgetScriptUrl = getIubendaWidgetScriptUrl();
 const privacyFooterLink = String(getIubendaLegalUrl("privacy") || DEFAULT_IUBENDA_PRIVACY_URL).trim();
 const cookieFooterLink = String(getIubendaLegalUrl("cookie") || DEFAULT_IUBENDA_COOKIE_URL).trim();
+const socialImageUrl = absoluteUrl(DEFAULT_SOCIAL_IMAGE_PATH);
 
 function getFooterLegalLinkClassName(href: string) {
   const isIubendaLink = /^https?:\/\/(www\.)?iubenda\.com/i.test(href);
@@ -73,11 +81,31 @@ export const metadata: Metadata = {
     description: SITE_DESCRIPTION,
     locale: "en_US",
     url: "/",
+    images: [
+      {
+        url: socialImageUrl,
+        width: 1200,
+        height: 630,
+        alt: SITE_NAME,
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: SITE_NAME,
     description: SITE_DESCRIPTION,
+    images: [socialImageUrl],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
   },
 };
 

@@ -12,25 +12,40 @@ export const SITE_KEYWORDS = [
   "team discovery",
 ];
 
-const DEFAULT_SITE_URL = "http://localhost:3000";
+const DEFAULT_DEV_SITE_URL = "http://localhost:3000";
+const DEFAULT_PROD_SITE_URL = "https://onbure.com";
+export const DEFAULT_SOCIAL_IMAGE_PATH = "/search-preview.svg";
 
 function normalizeOrigin(value: string) {
   const trimmed = String(value || "").trim();
-  if (!trimmed) return DEFAULT_SITE_URL;
-  return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+  if (!trimmed) return "";
+
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  return withProtocol.endsWith("/") ? withProtocol.slice(0, -1) : withProtocol;
 }
 
 export function getSiteUrl() {
-  const configuredUrl =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.NEXTAUTH_URL ||
-    DEFAULT_SITE_URL;
+  const candidates = [
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.NEXTAUTH_URL,
+    process.env.SITE_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    process.env.VERCEL_URL,
+    process.env.NODE_ENV === "production" ? DEFAULT_PROD_SITE_URL : DEFAULT_DEV_SITE_URL,
+  ];
 
-  try {
-    return new URL(normalizeOrigin(configuredUrl));
-  } catch {
-    return new URL(DEFAULT_SITE_URL);
+  for (const candidate of candidates) {
+    try {
+      const normalized = normalizeOrigin(candidate || "");
+      if (normalized) {
+        return new URL(normalized);
+      }
+    } catch {
+      continue;
+    }
   }
+
+  return new URL(DEFAULT_DEV_SITE_URL);
 }
 
 export function absoluteUrl(pathname = "/") {
@@ -54,6 +69,8 @@ export function buildPageMetadata({
   noIndex = false,
   openGraphType = "website",
 }: PageMetadataOptions): Metadata {
+  const socialImageUrl = absoluteUrl(DEFAULT_SOCIAL_IMAGE_PATH);
+
   return {
     title,
     description,
@@ -66,11 +83,20 @@ export function buildPageMetadata({
       siteName: SITE_NAME,
       locale: "en_US",
       url: pathname || undefined,
+      images: [
+        {
+          url: socialImageUrl,
+          width: 1200,
+          height: 630,
+          alt: SITE_NAME,
+        },
+      ],
     },
     twitter: {
       card: "summary_large_image",
       title,
       description,
+      images: [socialImageUrl],
     },
     robots: noIndex
       ? {
@@ -85,7 +111,17 @@ export function buildPageMetadata({
             "max-video-preview": -1,
           },
         }
-      : undefined,
+      : {
+          index: true,
+          follow: true,
+          googleBot: {
+            index: true,
+            follow: true,
+            "max-image-preview": "large",
+            "max-snippet": -1,
+            "max-video-preview": -1,
+          },
+        },
   };
 }
 

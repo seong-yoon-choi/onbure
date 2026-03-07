@@ -426,6 +426,17 @@ export default function HomePageClient() {
           <div className="relative">
             <div className="absolute inset-0 rounded-[2rem] bg-[linear-gradient(140deg,rgba(15,23,42,0.14),rgba(245,158,11,0.08),rgba(13,148,136,0.12))] blur-2xl" />
             <div className="relative overflow-hidden rounded-[2rem] border border-slate-200/80 bg-slate-950 p-6 text-white shadow-[0_40px_110px_-50px_rgba(15,23,42,0.8)]">
+              <div className="mb-6 overflow-hidden rounded-[1.5rem] border border-white/10 bg-white/5 shadow-[0_20px_50px_-30px_rgba(8,18,37,0.85)]">
+                <Image
+                  src="/search-preview.svg"
+                  alt="Preview of the Onbure collaboration workspace"
+                  width="1200"
+                  height="630"
+                  priority
+                  unoptimized
+                  className="block h-auto w-full"
+                />
+              </div>
               <div className="mb-8 flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.2em] text-white/45">{copy.workflowKicker}</p>
