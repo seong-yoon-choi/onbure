@@ -24,7 +24,7 @@ export default function robots(): MetadataRoute.Robots {
         disallow: "/",
       },
       sitemap: absoluteUrl("/sitemap.xml"),
-      host: siteUrl.origin,
+      host: siteUrl.host,
     };
   }
 
@@ -36,6 +36,6 @@ export default function robots(): MetadataRoute.Robots {
       },
     ],
     sitemap: absoluteUrl("/sitemap.xml"),
-    host: siteUrl.origin,
+    host: siteUrl.host,
   };
 }
