@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions, isAdmin } from "@/lib/auth";
-import { supabaseRest } from "@/lib/supabase-rest";
 import { sendEmail } from "@/lib/email";
+import { buildAdminAnswerEmail } from "@/lib/i18n/admin-email";
+import { supabaseRest } from "@/lib/supabase-rest";
 
 export const runtime = "nodejs";
 
@@ -40,16 +41,19 @@ export async function GET(req: Request) {
                     .filter(Boolean)
             )
         );
-        const emailByUserId = new Map<string, string>();
+        const profileByUserId = new Map<string, { email: string; language: string }>();
         if (authorUserIds.length > 0) {
             const inClause = authorUserIds.map((userId) => encodeURIComponent(userId)).join(",");
             const profileRows = await supabaseRest(
-                `/profiles?select=user_id,email&user_id=in.(${inClause})`
-            ) as Array<{ user_id: string; email: string | null }>;
+                `/profiles?select=user_id,email,language&user_id=in.(${inClause})`
+            ) as Array<{ user_id: string; email?: string | null; language?: string | null }>;
             profileRows.forEach((profile) => {
                 const userId = String(profile?.user_id || "").trim();
                 if (!userId) return;
-                emailByUserId.set(userId, String(profile?.email || "").trim());
+                profileByUserId.set(userId, {
+                    email: String(profile?.email || "").trim(),
+                    language: String(profile?.language || "").trim(),
+                });
             });
         }
 
@@ -68,16 +72,19 @@ export async function GET(req: Request) {
                             resolvedFileUrl = rawUrl;
                         }
                     } catch {
-                        // Ignore error
+                        // Ignore signed-url failures; keep attachment inaccessible rather than failing the response.
                     }
                 }
+
+                const profile = profileByUserId.get(userId);
 
                 return {
                     ...row,
                     attached_file_name: String(row?.attached_file_name || "").trim() || null,
                     attached_file_url: resolvedFileUrl || null,
                     profiles: {
-                        email: userId ? (emailByUserId.get(userId) || "") : "",
+                        email: profile?.email || "",
+                        language: profile?.language || "",
                     },
                 };
             })
@@ -102,11 +109,36 @@ export async function POST(req: Request) {
         }
 
         const body = await req.json();
-        const { entryId, answerContent, notifyEmail, entryTitle, typeLabel } = body;
-        const normalizedTypeLabel = normalizeAdminSubmissionType(typeLabel);
+        const entryId = String(body?.entryId || "").trim();
+        const answerContent = String(body?.answerContent || "");
 
         if (!entryId || !answerContent) {
             return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+        }
+
+        const entryRows = await supabaseRest(
+            `/qna_feedback?select=entry_id,title,type,author_user_id&entry_id=eq.${encodeURIComponent(entryId)}&limit=1`
+        ) as Array<{
+            entry_id?: string | null;
+            title?: string | null;
+            type?: string | null;
+            author_user_id?: string | null;
+        }>;
+        const entry = entryRows[0];
+        if (!entry?.entry_id) {
+            return NextResponse.json({ error: "Entry not found" }, { status: 404 });
+        }
+
+        const authorUserId = String(entry.author_user_id || "").trim();
+        let notifyEmail = "";
+        let recipientLanguage = "";
+        if (authorUserId) {
+            const profileRows = await supabaseRest(
+                `/profiles?select=email,language&user_id=eq.${encodeURIComponent(authorUserId)}&limit=1`
+            ) as Array<{ email?: string | null; language?: string | null }>;
+            const profile = profileRows[0];
+            notifyEmail = String(profile?.email || "").trim();
+            recipientLanguage = String(profile?.language || "").trim();
         }
 
         const now = new Date().toISOString();
@@ -117,26 +149,22 @@ export async function POST(req: Request) {
                 method: "PATCH",
                 body: {
                     answer_content: answerContent,
-                    answered_at: now
-                }
+                    answered_at: now,
+                },
             }
         );
 
         let emailWarning = "";
         if (notifyEmail) {
-            const subject = `[Onbure] 답변이 등록되었습니다: ${entryTitle || "Your Inquiry"}`;
-            const html = `
-                <h2>안녕하세요, Onbure 입니다.</h2>
-                <p>남겨주신 ${normalizedTypeLabel === "qna" ? "문의" : "피드백"}에 대한 답변이 등록되었습니다.</p>
-                <hr style="border: 1px solid #eaeaea; margin-top: 20px; margin-bottom: 20px;" />
-                <p><strong>답변 내용:</strong></p>
-                <p style="white-space: pre-wrap;">${answerContent}</p>
-                <hr style="border: 1px solid #eaeaea; margin-top: 20px; margin-bottom: 20px;" />
-                <p>항상 Onbure를 이용해주셔서 감사합니다.</p>
-            `;
+            const email = buildAdminAnswerEmail({
+                language: recipientLanguage,
+                type: normalizeAdminSubmissionType(entry.type),
+                title: entry.title,
+                answerContent,
+            });
 
             try {
-                await sendEmail(notifyEmail, subject, html);
+                await sendEmail(notifyEmail, email.subject, email.html);
             } catch (err) {
                 console.error("Failed to send answer email:", err);
                 emailWarning = "Failed to send email to user.";

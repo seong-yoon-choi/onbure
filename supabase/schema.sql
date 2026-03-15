@@ -484,6 +484,8 @@ for each row execute function public.set_updated_at();
 
 create index if not exists idx_qna_feedback_team_created_at on public.qna_feedback (team_id, created_at desc);
 create index if not exists idx_qna_feedback_author on public.qna_feedback (author_user_id);
+drop index if exists public.idx_workspace_qna_feedback_team_created_at;
+drop index if exists public.idx_workspace_qna_feedback_author;
 
 -- AUDIT LOGS (for secure realtime fan-out + security audit trail)
 create table if not exists public.audit_logs (

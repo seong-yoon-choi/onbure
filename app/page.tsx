@@ -1,50 +1,69 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import HomePageClient from "@/app/homepage-client";
-import { absoluteUrl, buildPageMetadata, SITE_NAME } from "@/lib/seo";
+import {
+  HOME_SEO_DESCRIPTION,
+  absoluteUrl,
+  buildPageMetadata,
+  resolveHomeSeoLanguage,
+  SITE_NAME,
+} from "@/lib/seo";
 
-export const metadata: Metadata = buildPageMetadata({
-  title: "Find the Right Partner and Bring Your Idea to Life",
-  description:
-    "Onbure helps people with ideas find global partners, get discovered through profiles, and move from idea to execution with live translation.",
-  pathname: "/",
-  keywords: [
-    "global startup partners",
-    "live translation collaboration",
-    "partner discovery platform",
-    "cross-border project workspace",
-    "idea execution platform",
-  ],
-});
+export async function generateMetadata(): Promise<Metadata> {
+  const requestHeaders = await headers();
+  const seoLanguage = resolveHomeSeoLanguage({
+    country: requestHeaders.get("x-vercel-ip-country"),
+    acceptLanguage: requestHeaders.get("accept-language"),
+  });
 
-const brandSchema = {
-  "@context": "https://schema.org",
-  "@graph": [
-    {
-      "@type": "Organization",
-      name: SITE_NAME,
-      url: absoluteUrl("/"),
-      logo: absoluteUrl("/icon.png"),
-    },
-    {
-      "@type": "WebSite",
-      name: SITE_NAME,
-      url: absoluteUrl("/"),
-      description:
-        "A platform where people with ideas can find global collaborators, post a profile, and execute ideas together with live translation.",
-    },
-    {
-      "@type": "SoftwareApplication",
-      name: SITE_NAME,
-      applicationCategory: "BusinessApplication",
-      operatingSystem: "Web",
-      url: absoluteUrl("/"),
-      description:
-        "Onbure is a web platform for finding global partners, getting discovered through profiles, and moving ideas into real projects with live translation.",
-    },
-  ],
-};
+  return buildPageMetadata({
+    title: "Find the Right Partner and Bring Your Idea to Life",
+    description: HOME_SEO_DESCRIPTION[seoLanguage],
+    pathname: "/",
+    locale: seoLanguage === "ko" ? "ko_KR" : "en_US",
+    keywords: [
+      "global startup partners",
+      "live translation collaboration",
+      "partner discovery platform",
+      "cross-border project workspace",
+      "idea execution platform",
+    ],
+  });
+}
 
-export default function Home() {
+export default async function Home() {
+  const requestHeaders = await headers();
+  const seoLanguage = resolveHomeSeoLanguage({
+    country: requestHeaders.get("x-vercel-ip-country"),
+    acceptLanguage: requestHeaders.get("accept-language"),
+  });
+  const brandDescription = HOME_SEO_DESCRIPTION[seoLanguage];
+  const brandSchema = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        name: SITE_NAME,
+        url: absoluteUrl("/"),
+        logo: absoluteUrl("/icon.png"),
+      },
+      {
+        "@type": "WebSite",
+        name: SITE_NAME,
+        url: absoluteUrl("/"),
+        description: brandDescription,
+      },
+      {
+        "@type": "SoftwareApplication",
+        name: SITE_NAME,
+        applicationCategory: "BusinessApplication",
+        operatingSystem: "Web",
+        url: absoluteUrl("/"),
+        description: brandDescription,
+      },
+    ],
+  };
+
   return (
     <>
       <script

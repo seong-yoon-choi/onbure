@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:e2e": "node scripts/e2e-smoke.mjs"
+    "test:e2e": "node scripts/e2e-smoke.mjs",
+    "check:i18n": "node scripts/check-locale-sanity.mjs",
+    "cleanup:orphan-auth": "node scripts/cleanup-orphan-auth-users.mjs"
   },
   "dependencies": {
     "@notionhq/client": "^5.9.0",

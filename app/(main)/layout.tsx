@@ -414,10 +414,30 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         return () => window.removeEventListener("onbure-open-chat-dm", onOpenChatDm as EventListener);
     }, [markChatAlertsChecked]);
 
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+
+        const syncSearchTermFromLocation = () => {
+            const nextSearchTerm = window.location.pathname.startsWith("/discovery")
+                ? new URLSearchParams(window.location.search).get("q") || ""
+                : "";
+            setSearchTerm(nextSearchTerm);
+        };
+
+        syncSearchTermFromLocation();
+        window.addEventListener("popstate", syncSearchTermFromLocation);
+        return () => window.removeEventListener("popstate", syncSearchTermFromLocation);
+    }, [pathname]);
+
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
-        trackNavAction("nav.search", { keywordLength: searchTerm.trim().length });
-        router.push(`/discovery?q=${encodeURIComponent(searchTerm)}`);
+        const trimmedSearchTerm = searchTerm.trim();
+        trackNavAction("nav.search", { keywordLength: trimmedSearchTerm.length });
+        if (!trimmedSearchTerm) {
+            router.push("/discovery");
+            return;
+        }
+        router.push(`/discovery?q=${encodeURIComponent(trimmedSearchTerm)}`);
     };
 
     return (

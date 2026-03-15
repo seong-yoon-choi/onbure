@@ -617,7 +617,7 @@ export default function ProfilePage() {
                                         addSkill();
                                     }
                                 }}
-                                placeholder={t("profile.skillsPlaceholder")}
+                                aria-label={t("profile.skills")}
                                 className={fieldClass}
                             />
                             <button

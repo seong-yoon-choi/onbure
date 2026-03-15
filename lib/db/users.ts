@@ -49,6 +49,11 @@ interface SupabaseProfileRow {
     updated_at?: string;
 }
 
+interface SupabaseAuthUserSummary {
+    id: string;
+    email: string | null;
+}
+
 function buildSupabaseInClause(values: string[]) {
     return values
         .map((value) => String(value || "").trim())
@@ -215,6 +220,127 @@ async function createSupabaseAdminClient() {
             autoRefreshToken: false,
         },
     });
+}
+
+function normalizeEmailAddress(email: string | null | undefined): string {
+    return String(email || "").trim().toLowerCase();
+}
+
+function isSupabaseAuthDuplicateError(error: unknown): boolean {
+    const message = String((error as { message?: string } | null)?.message || "").toLowerCase();
+    return (
+        message.includes("already registered") ||
+        message.includes("already exists") ||
+        message.includes("duplicate") ||
+        message.includes("email_exists")
+    );
+}
+
+function isSupabaseAuthUserNotFoundError(error: unknown): boolean {
+    const message = String((error as { message?: string } | null)?.message || "").toLowerCase();
+    return message.includes("user not found") || message.includes("not found");
+}
+
+function mapSupabaseAuthUserSummary(user: { id?: string; email?: string | null }): SupabaseAuthUserSummary | null {
+    const id = String(user?.id || "").trim();
+    if (!id) return null;
+    const email = String(user?.email || "").trim();
+    return {
+        id,
+        email: email || null,
+    };
+}
+
+export async function listSupabaseAuthUsers(
+    adminClientOverride?: Awaited<ReturnType<typeof createSupabaseAdminClient>>
+): Promise<SupabaseAuthUserSummary[]> {
+    const adminClient = adminClientOverride || await createSupabaseAdminClient();
+    const users: SupabaseAuthUserSummary[] = [];
+    const perPage = 200;
+    let page = 1;
+
+    while (true) {
+        const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage });
+        if (error) {
+            throw new Error(`Supabase Auth Error: ${error.message}`);
+        }
+
+        const batch = Array.isArray((data as any)?.users) ? ((data as any).users as Array<{ id?: string; email?: string | null }>) : [];
+        users.push(
+            ...batch
+                .map(mapSupabaseAuthUserSummary)
+                .filter((user): user is SupabaseAuthUserSummary => Boolean(user))
+        );
+
+        const nextPage = Number((data as any)?.nextPage || 0);
+        if (nextPage > page) {
+            page = nextPage;
+            continue;
+        }
+        if (batch.length < perPage) break;
+        page += 1;
+    }
+
+    return users;
+}
+
+export async function findSupabaseAuthUserById(userId: string): Promise<SupabaseAuthUserSummary | null> {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) return null;
+
+    const adminClient = await createSupabaseAdminClient();
+    const authAdmin = adminClient.auth.admin as any;
+
+    if (typeof authAdmin.getUserById === "function") {
+        const { data, error } = await authAdmin.getUserById(normalizedUserId);
+        if (error) {
+            if (isSupabaseAuthUserNotFoundError(error)) return null;
+            throw new Error(`Supabase Auth Error: ${error.message}`);
+        }
+        return mapSupabaseAuthUserSummary(data?.user || null);
+    }
+
+    const users = await listSupabaseAuthUsers(adminClient);
+    return users.find((user) => user.id === normalizedUserId) || null;
+}
+
+export async function findSupabaseAuthUserByEmail(email: string): Promise<SupabaseAuthUserSummary | null> {
+    const normalizedEmail = normalizeEmailAddress(email);
+    if (!normalizedEmail) return null;
+
+    const users = await listSupabaseAuthUsers();
+    return users.find((user) => normalizeEmailAddress(user.email) === normalizedEmail) || null;
+}
+
+export async function deleteSupabaseAuthUserById(userId: string): Promise<void> {
+    const normalizedUserId = String(userId || "").trim();
+    if (!normalizedUserId) return;
+
+    const adminClient = await createSupabaseAdminClient();
+    const { error } = await adminClient.auth.admin.deleteUser(normalizedUserId);
+    if (error && !isSupabaseAuthUserNotFoundError(error)) {
+        throw new Error(`Supabase Auth Error: ${error.message}`);
+    }
+}
+
+export async function deleteSupabaseAuthUserByEmail(email: string): Promise<void> {
+    const authUser = await findSupabaseAuthUserByEmail(email);
+    if (!authUser?.id) return;
+    await deleteSupabaseAuthUserById(authUser.id);
+}
+
+async function recoverOrphanedSupabaseAuthUserByEmail(email: string): Promise<boolean> {
+    const normalizedEmail = normalizeEmailAddress(email);
+    if (!normalizedEmail) return false;
+
+    const existingProfile = await getUserByEmail(normalizedEmail);
+    if (existingProfile) return false;
+
+    const orphanAuthUser = await findSupabaseAuthUserByEmail(normalizedEmail);
+    if (!orphanAuthUser?.id) return false;
+
+    await deleteSupabaseAuthUserById(orphanAuthUser.id);
+    return true;
 }
 
 export async function getUserByEmail(email: string): Promise<User | null> {
@@ -400,7 +526,7 @@ export async function createUser(data: {
         const normalizedCountry = String(data.country || "KR").trim().toUpperCase() || "KR";
         const normalizedAge = Number.isFinite(Number(data.age)) ? Number(data.age) : null;
 
-        const { data: authData, error: authError } = await adminClient.auth.admin.createUser({
+        const createAuthUser = () => adminClient.auth.admin.createUser({
             email: data.email,
             password: data.password,
             email_confirm: true,
@@ -411,6 +537,16 @@ export async function createUser(data: {
                 country: normalizedCountry,
             },
         });
+
+        let { data: authData, error: authError } = await createAuthUser();
+        if (authError && isSupabaseAuthDuplicateError(authError)) {
+            const recovered = await recoverOrphanedSupabaseAuthUserByEmail(data.email);
+            if (recovered) {
+                const retryResult = await createAuthUser();
+                authData = retryResult.data;
+                authError = retryResult.error;
+            }
+        }
 
         if (authError) {
             throw new Error(`Supabase Auth Error: ${authError.message}`);
@@ -685,6 +821,8 @@ export async function deleteUserAccount(userId: string) {
     }
 
     if (isSupabaseBackend()) {
+        const profile = await getUserByUserId(normalizedUserId);
+        const profileEmail = normalizeEmailAddress(profile?.email);
         const ownedTeams = (await supabaseRest(
             `/teams?select=team_id&primary_owner_user_id=eq.${encodeURIComponent(normalizedUserId)}`
         )) as Array<{ team_id?: string | null }>;
@@ -702,6 +840,16 @@ export async function deleteUserAccount(userId: string) {
             method: "DELETE",
             prefer: "return=minimal",
         });
+
+        const authUserById = await findSupabaseAuthUserById(normalizedUserId);
+        if (authUserById?.id) {
+            await deleteSupabaseAuthUserById(authUserById.id);
+            return;
+        }
+
+        if (profileEmail) {
+            await deleteSupabaseAuthUserByEmail(profileEmail);
+        }
         return;
     }
 

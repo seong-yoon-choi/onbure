@@ -2,7 +2,11 @@ import type { Metadata } from "next";
 
 export const SITE_NAME = "Onbure";
 export const SITE_DESCRIPTION =
-  "Onbure helps people with ideas find global partners, get discovered through profiles, and move from idea to execution with live translation.";
+  "Find the right partner, start the project, and bring your idea to life.";
+export const HOME_SEO_DESCRIPTION = {
+  en: "Find the right partner, start the project, and bring your idea to life.",
+  ko: "함께할 사람을 찾아서, 프로젝트를 만들고, 여러분의 아이디어를 실현시켜 보세요!",
+} as const;
 export const SITE_KEYWORDS = [
   "Onbure",
   "global collaboration",
@@ -11,6 +15,8 @@ export const SITE_KEYWORDS = [
   "project execution",
   "partner discovery",
 ];
+
+export type HomeSeoLanguage = keyof typeof HOME_SEO_DESCRIPTION;
 
 const DEFAULT_DEV_SITE_URL = "http://localhost:3000";
 const DEFAULT_PROD_SITE_URL = "https://onbure.com";
@@ -99,7 +105,23 @@ type PageMetadataOptions = {
   keywords?: string[];
   noIndex?: boolean;
   openGraphType?: "website" | "article";
+  locale?: string;
 };
+
+export function resolveHomeSeoLanguage(input: {
+  country?: string | null;
+  acceptLanguage?: string | null;
+}): HomeSeoLanguage {
+  const country = String(input.country || "").trim().toUpperCase();
+  if (country === "KR") return "ko";
+
+  const acceptLanguage = String(input.acceptLanguage || "").trim().toLowerCase();
+  if (/(?:^|,)\s*ko(?:-|;|,|$)/.test(acceptLanguage)) {
+    return "ko";
+  }
+
+  return "en";
+}
 
 export function buildPageMetadata({
   title,
@@ -108,6 +130,7 @@ export function buildPageMetadata({
   keywords = [],
   noIndex = false,
   openGraphType = "website",
+  locale = "en_US",
 }: PageMetadataOptions): Metadata {
   const socialImageUrl = absoluteUrl(DEFAULT_SOCIAL_IMAGE_PATH);
 
@@ -121,7 +144,7 @@ export function buildPageMetadata({
       title,
       description,
       siteName: SITE_NAME,
-      locale: "en_US",
+      locale,
       url: pathname || undefined,
       images: [
         {

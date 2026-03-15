@@ -1,0 +1,44 @@
+import homeCopyData from "@/lib/i18n/home-copy.json";
+import { AppLanguage } from "@/lib/i18n/messages";
+
+export type HomeCopy = {
+    badge: string;
+    navOpenApp: string;
+    navLogIn: string;
+    navCreateAccount: string;
+    title1: string;
+    title2: string;
+    title3: string;
+    description: string;
+    heroOpenApp: string;
+    heroCreateAccount: string;
+    miniDiscoveryTitle: string;
+    miniDiscoveryBody: string;
+    miniWorkspaceTitle: string;
+    miniWorkspaceBody: string;
+    miniRequestsTitle: string;
+    miniRequestsBody: string;
+    workflowKicker: string;
+    workflowTitle: string;
+    workflowPill: string;
+    boardTitle: string;
+    boardBody: string;
+    inboxTitle: string;
+    inboxBody: string;
+    discoveryPanelTitle: string;
+    discoveryPanelBody: string;
+    fitTitle: string;
+    fitBody: string;
+    sectionKicker: string;
+    sectionTitle: string;
+    sectionDescription: string;
+    feature1Title: string;
+    feature1Body: string;
+    feature2Title: string;
+    feature2Body: string;
+    feature3Title: string;
+    feature3Body: string;
+    languageAria: string;
+};
+
+export const HOME_COPY = homeCopyData as Record<AppLanguage, HomeCopy>;
